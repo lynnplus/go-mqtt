@@ -29,7 +29,7 @@ import (
 // Reason codes can provide detailed operational feedback to clients and servers.
 // For more information about these reason codes, see the markdown "[REASON CODE]"
 //
-// [REASON CODE]: https://github.com/lynnplus/go-mqtt/tree/master/packets/REASON_CODE.md
+// [REASON CODE]: https://github.com/lynnplus/go-mqtt/blob/master/packets/REASON_CODE.md
 type ReasonCode byte
 
 // IsError returns whether the reason code is an error code.

@@ -16,28 +16,28 @@
 
 package mqtt
 
-import "context"
+import (
+	"net"
+	"sync/atomic"
+)
 
-type ClientListener struct {
-	OnServerConnected    func(client Client, reconn bool)
-	OnServerDisconnected func(client Client, err error)
-	OnServerConnFailed   func(client Client, err error)
+type Context interface {
 }
 
-type ClientConfig struct {
-	AutoConnect bool //Whether to automatically retry after failure to connect to the server
-	Pinger      Pinger
-	ClientListener
+type mqttContext struct {
+	conn   net.Conn
+	isCopy atomic.Bool
 }
 
-type Client struct {
+func (c *mqttContext) reset() {
+
 }
 
-func NewClient(config ClientConfig) *Client {
-	return &Client{}
+func (c *mqttContext) MarshalPlay(v any) {
+
 }
 
-func (c *Client) Connect(ctx context.Context) error {
-
-	return nil
+func (c *mqttContext) Clone() Context {
+	//TODO clone raw ctx , set isCopy to true
+	return &mqttContext{}
 }

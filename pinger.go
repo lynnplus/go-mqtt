@@ -16,28 +16,5 @@
 
 package mqtt
 
-import "context"
-
-type ClientListener struct {
-	OnServerConnected    func(client Client, reconn bool)
-	OnServerDisconnected func(client Client, err error)
-	OnServerConnFailed   func(client Client, err error)
-}
-
-type ClientConfig struct {
-	AutoConnect bool //Whether to automatically retry after failure to connect to the server
-	Pinger      Pinger
-	ClientListener
-}
-
-type Client struct {
-}
-
-func NewClient(config ClientConfig) *Client {
-	return &Client{}
-}
-
-func (c *Client) Connect(ctx context.Context) error {
-
-	return nil
+type Pinger interface {
 }

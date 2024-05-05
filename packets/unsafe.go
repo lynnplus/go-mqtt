@@ -103,3 +103,72 @@ func unsafeReadUint32(r io.Reader, v *uint32) error {
 	*v = uint32(cc[0])<<24 | uint32(cc[1])<<16 | uint32(cc[2])<<8 | uint32(cc[3])
 	return nil
 }
+
+func unsafeWriteString(w io.Writer, v *string) error {
+	n := uint16(len(*v))
+	if err := unsafeWriteUint16(w, &n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	b := unsafe.Slice(unsafe.StringData(*v), n)
+	if _, err := w.Write(b); err != nil {
+		return err
+	}
+	return nil
+}
+
+func unsafeWriteByte(w io.Writer, v *byte) error {
+	cc := unsafe.Slice(v, 1)
+	_, err := w.Write(cc)
+	return err
+}
+
+func unsafeWriteUint16(w io.Writer, v *uint16) error {
+	cc := unsafe.Slice((*byte)(unsafe.Pointer(v)), 2)
+	_, err := w.Write(cc[1:])
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(cc[:1])
+	return err
+}
+
+func unsafeWriteUint32(w io.Writer, v *uint32) error {
+	cc := unsafe.Slice((*byte)(unsafe.Pointer(v)), 4)
+	for i := 3; i >= 0; i-- {
+		if _, err := w.Write(cc[i : i+1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func unsafeWriteBytes(w io.Writer, v *[]byte) error {
+	_, err := w.Write(*v)
+	return err
+}
+
+func unsafeWriteWrap(w io.Writer, dst any, err *error) {
+	if err != nil && *err != nil {
+		return
+	}
+	switch v := dst.(type) {
+	case *[]byte:
+		*err = unsafeWriteBytes(w, v)
+	case *bool:
+		b := (*byte)(unsafe.Pointer(v))
+		*err = unsafeWriteByte(w, b)
+	case *byte:
+		*err = unsafeWriteByte(w, v)
+	case *string:
+		*err = unsafeWriteString(w, v)
+	case *uint32:
+		*err = unsafeWriteUint32(w, v)
+	case *uint16:
+		*err = unsafeWriteUint16(w, v)
+	default:
+		panic(fmt.Sprintf("unsupported write type %v", v))
+	}
+}

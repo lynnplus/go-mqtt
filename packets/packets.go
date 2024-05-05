@@ -172,7 +172,7 @@ func encodeVBI(length int, buf []byte) (int, error) {
 			buf[i] |= 0x80
 		}
 		if length == 0 {
-			return i, nil
+			return i + 1, nil
 		}
 	}
 	return 0, errors.New("fail to encode VBI")

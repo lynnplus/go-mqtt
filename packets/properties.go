@@ -114,7 +114,7 @@ func ValidatePropID(prop PropertyID, pt PacketType) bool {
 // ValidateWillPropID takes a PropertyID and returns
 // a bool indicating if that property is valid for that WillProperties
 func ValidateWillPropID(prop PropertyID) bool {
-	_, ok := validPacketProperties[prop]
+	_, ok := validWillProperties[prop]
 	return ok
 }
 
@@ -122,7 +122,76 @@ func newInvalidPropValueError(id PropertyID, value any) error {
 	return NewReasonCodeError(ProtocolError, fmt.Sprintf("invalid prop value %v for property %v", value, id))
 }
 
-func ReadPacketProperties(r io.Reader, packetType PacketType) error {
+func CopyPropPtrValue[T any](src map[PropertyID]any, id PropertyID, dstPtr *T, defaultValue T) bool {
+	if dstPtr == nil {
+		panic("destination pointer is nil")
+	}
+	v, ok := src[id]
+	if !ok {
+		*dstPtr = defaultValue
+		return false
+	}
+	m, ok2 := v.(*T)
+	if !ok2 {
+		panic("type mismatch")
+	}
+	*dstPtr = *m
+	return true
+}
+
+func ReadPacketProperties(r io.Reader, packetType PacketType) (map[PropertyID]any, error) {
+	return readAllProperties(r, func(id PropertyID) error {
+		if !ValidatePropID(id, packetType) {
+			return NewReasonCodeError(MalformedPacket, fmt.Sprintf("invalid property %d for %s", id, packetType))
+		}
+		return nil
+	})
+}
+
+func ReadWillProperties(r io.Reader) (map[PropertyID]any, error) {
+	return readAllProperties(r, func(id PropertyID) error {
+		if !ValidateWillPropID(id) {
+			return NewReasonCodeError(ProtocolError, fmt.Sprintf("invalid property %d for will properties", id))
+		}
+		return nil
+	})
+}
+
+func writePropIdAndValue(w io.Writer, id PropertyID, value any, err *error) {
+	unsafeWriteWrap(w, (*byte)(&id), err)
+	unsafeWriteWrap(w, value, err)
+}
+
+func writeUserPropsData(w io.Writer, props UserProperties, err *error) {
+	if len(props) == 0 {
+		return
+	}
+	if err != nil && *err != nil {
+		return
+	}
+	id := PropUserProperty
+	unsafeWriteWrap(w, (*byte)(&id), err)
+	for k, v := range props {
+		unsafeWriteWrap(w, (*byte)(&id), err)
+		unsafeWriteWrap(w, &k, err)
+		unsafeWriteWrap(w, &v, err)
+	}
+}
+
+func writePropertiesData(w io.Writer, data []byte) error {
+	vbi := [4]byte{}
+	n, err := encodeVBI(len(data), vbi[:])
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(vbi[:n]); err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+func readAllProperties(r io.Reader, validate func(PropertyID) error) (map[PropertyID]any, error) {
 	buf := [4]byte{}
 	totalSize, _, err := decodeVBI(r, buf[:])
 
@@ -130,35 +199,37 @@ func ReadPacketProperties(r io.Reader, packetType PacketType) error {
 	var propId PropertyID
 	for {
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if totalSize == 0 {
-			return err
+			return props, err
 		}
 		if err = unsafeReadByte(r, (*byte)(&propId)); err != nil {
-			return err
+			return nil, err
 		}
 
-		if ValidatePropID(propId, packetType) {
-			return NewReasonCodeError(MalformedPacket, fmt.Sprintf("invalid property %d for %s", propId, packetType))
+		if err = validate(propId); err != nil {
+			return nil, err
 		}
-
 		totalSize -= 1
 		switch propId {
-		case PropPayloadFormat:
+		case PropMaximumQOS:
 			var v byte
 			unsafeReadWrap(r, &v, &err)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if v != 0 && v != 1 {
-				return newInvalidPropValueError(propId, v)
+				return nil, newInvalidPropValueError(propId, v)
 			}
 			props[propId] = &v
 			totalSize -= 1
-		case PropMessageExpiryInterval, PropSessionExpiryInterval, PropMaximumPacketSize:
+		case PropMessageExpiryInterval, PropSessionExpiryInterval, PropMaximumPacketSize, PropWillDelayInterval:
 			var v uint32
 			unsafeReadWrap(r, &v, &err)
+			if propId == PropMaximumPacketSize && v == 0 {
+				return nil, newInvalidPropValueError(propId, v)
+			}
 			props[propId] = &v
 			totalSize -= 4
 		case PropContentType, PropResponseTopic, PropAssignedClientID, PropAuthMethod, PropResponseInfo, PropServerReference, PropReasonString:
@@ -176,10 +247,10 @@ func ReadPacketProperties(r io.Reader, packetType PacketType) error {
 			sidBs := [4]byte{}
 			l, n, e := decodeVBI(r, sidBs[:])
 			if e != nil {
-				return e
+				return nil, e
 			}
 			if l == 0 {
-				return newInvalidPropValueError(propId, l)
+				return nil, newInvalidPropValueError(propId, l)
 			}
 			props[propId] = &l
 			totalSize -= n
@@ -189,26 +260,18 @@ func ReadPacketProperties(r io.Reader, packetType PacketType) error {
 			unsafeReadWrap(r, &v, &err)
 			props[propId] = &v
 			totalSize -= 2
-		case PropRequestProblemInfo, PropRequestResponseInfo, PropRetainAvailable, PropWildcardSubAvailable, PropSubIDAvailable, PropSharedSubAvailable:
+			if propId == PropReceiveMaximum && v == 0 {
+				return nil, newInvalidPropValueError(propId, v)
+			}
+		case PropPayloadFormat, PropRequestProblemInfo, PropRequestResponseInfo, PropRetainAvailable, PropWildcardSubAvailable, PropSubIDAvailable, PropSharedSubAvailable:
 			var v bool
 			b := (*byte)(unsafe.Pointer(&v))
 			unsafeReadWrap(r, &b, &err)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if *b != 0 && *b != 1 {
-				return newInvalidPropValueError(propId, *b)
-			}
-			props[propId] = &v
-			totalSize -= 1
-		case PropMaximumQOS:
-			var v byte
-			unsafeReadWrap(r, &v, &err)
-			if err != nil {
-				return err
-			}
-			if v != 0 && v != 1 {
-				return newInvalidPropValueError(propId, v)
+				return nil, newInvalidPropValueError(propId, *b)
 			}
 			props[propId] = &v
 			totalSize -= 1
@@ -225,7 +288,7 @@ func ReadPacketProperties(r io.Reader, packetType PacketType) error {
 			u[k] = v
 			totalSize -= 4 + len(k) + len(v)
 		default:
-			return NewReasonCodeError(ProtocolError, fmt.Sprintf("unknown prop identifier %v", propId))
+			return nil, NewReasonCodeError(ProtocolError, fmt.Sprintf("unknown prop identifier %v", propId))
 		}
 	}
 }

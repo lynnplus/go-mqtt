@@ -35,7 +35,9 @@ type ReasonCode byte
 // IsError returns whether the reason code is an error code.
 func (c ReasonCode) IsError() bool { return c >= 0x80 }
 
-// readable string for reason code,copy from REASON_CODE.md
+// readable string for reason code,copy from "REASON_CODE.md"
+//
+// [REASON_CODE.md]: https://github.com/lynnplus/go-mqtt/blob/master/packets/REASON_CODE.md
 func (c ReasonCode) String() string {
 	switch c {
 	case 0:

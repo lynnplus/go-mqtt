@@ -32,6 +32,7 @@ type Connect struct {
 	ProtocolName    string
 	ProtocolVersion ProtocolVersion
 	KeepAlive       uint16
+	Properties      *ConnProperties
 }
 
 // Unpack read the packet bytes from io.Reader and decodes it into the packet struct.
@@ -62,4 +63,51 @@ func (c *Connect) Unpack(r io.Reader) error {
 
 	//read payload
 	return nil
+}
+
+// ConnProperties is a struct for the Connect properties,reference doc: "[CONNECT Properties]"
+//
+// [CONNECT Properties]: https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901046
+type ConnProperties struct {
+	//the Four Byte Integer representing the Session Expiry Interval in seconds.
+	//If the Session Expiry Interval is absent the value 0 is used. If it is set to 0, or is absent, the Session ends when the Network Connection is closed.
+	//If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session does not expire.
+	SessionExpiryInterval uint32
+	// the Two Byte Integer representing the Receive Maximum value.
+	// The Client uses this value to limit the number of QoS 1 and QoS 2 publications that it is willing to process concurrently. There is no mechanism to limit the QoS 0 publications that the Server might try to send.
+	// The value of Receive Maximum applies only to the current Network Connection. If the Receive Maximum value is absent then its value defaults to 65,535.
+	ReceiveMaximum      uint16
+	MaximumPacketSize   uint32
+	TopicAliasMaximum   uint16
+	RequestResponseInfo bool
+	RequestProblemInfo  bool
+	UserProps           UserProperties
+	AuthMethod          string
+	AuthData            []byte
+}
+
+func (c *ConnProperties) Unpack(r io.Reader) error {
+
+	return nil
+
+}
+
+type ConnAckProperties struct {
+	SessionExpiryInterval uint32
+	AssignedClientID      string
+	ServerKeepAlive       uint16
+	AuthMethod            string
+	AuthData              []byte
+	ResponseInfo          string
+	ServerReference       string
+	ReasonString          string
+	ReceiveMaximum        uint16
+	TopicAliasMaximum     uint16
+	MaximumQoS            uint8
+	RetainAvailable       bool
+	UserProps             UserProperties
+	MaximumPacketSize     uint32
+	WildcardSubAvailable  bool
+	SubIdAvailable        bool
+	SharedSubAvailable    bool
 }

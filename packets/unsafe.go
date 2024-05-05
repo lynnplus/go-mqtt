@@ -17,15 +17,39 @@
 package packets
 
 import (
+	"fmt"
 	"io"
 	"unsafe"
 )
+
+func unsafeReadWrap(r io.Reader, dst any, err *error) {
+	if err != nil && *err != nil {
+		return
+	}
+	switch v := dst.(type) {
+	case *[]byte:
+		*err = unsafeReadBytes(r, v)
+	case *byte:
+		*err = unsafeReadByte(r, v)
+	case *string:
+		*err = unsafeReadString(r, v)
+	case *uint32:
+		*err = unsafeReadUint32(r, v)
+	case *uint16:
+		*err = unsafeReadUint16(r, v)
+	default:
+		panic(fmt.Sprintf("unsupported read type %v", v))
+	}
+}
 
 func unsafeReadString(r io.Reader, dst *string) error {
 	var err error
 	var n uint16
 	if err = unsafeReadUint16(r, &n); err != nil {
 		return err
+	}
+	if n == 0 {
+		return nil
 	}
 	buf := make([]byte, n)
 	if _, err = io.ReadFull(r, buf); err != nil {
@@ -43,6 +67,23 @@ func unsafeReadByte(r io.Reader, dst *byte) error {
 	return nil
 }
 
+func unsafeReadBytes(r io.Reader, dst *[]byte) error {
+	var err error
+	var n uint16
+	if err = unsafeReadUint16(r, &n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	buf := make([]byte, n)
+	if _, err = io.ReadFull(r, buf); err != nil {
+		return err
+	}
+	*dst = buf
+	return nil
+}
+
 func unsafeReadUint16(r io.Reader, v *uint16) error {
 	cc := unsafe.Slice((*byte)(unsafe.Pointer(v)), 2)
 	if _, err := io.ReadFull(r, cc); err != nil {
@@ -50,5 +91,15 @@ func unsafeReadUint16(r io.Reader, v *uint16) error {
 	}
 	//mqtt use BigEndian
 	*v = uint16(cc[0])<<8 | uint16(cc[1])
+	return nil
+}
+
+func unsafeReadUint32(r io.Reader, v *uint32) error {
+	cc := unsafe.Slice((*byte)(unsafe.Pointer(v)), 4)
+	if _, err := io.ReadFull(r, cc); err != nil {
+		return err
+	}
+	//mqtt use BigEndian
+	*v = uint32(cc[0])<<24 | uint32(cc[1])<<16 | uint32(cc[2])<<8 | uint32(cc[3])
 	return nil
 }

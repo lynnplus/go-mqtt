@@ -17,6 +17,7 @@
 package packets
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"unsafe"
@@ -122,23 +123,42 @@ func newInvalidPropValueError(id PropertyID, value any) error {
 	return NewReasonCodeError(ProtocolError, fmt.Sprintf("invalid prop value %v for property %v", value, id))
 }
 
-func CopyPropPtrValue[T any](src map[PropertyID]any, id PropertyID, dstPtr *T, defaultValue T) bool {
-	if dstPtr == nil {
-		panic("destination pointer is nil")
+func safeCopyPropValue[T any](v any, dst *T, err *error) {
+	if err != nil && *err != nil {
+		return
 	}
-	v, ok := src[id]
+	if v == nil || dst == nil {
+		return
+	}
+	p, ok := v.(*T)
 	if !ok {
-		*dstPtr = defaultValue
-		return false
+		*err = errors.New("invalid property value convert")
+		return
 	}
-	m, ok2 := v.(*T)
-	if !ok2 {
-		panic("type mismatch")
-	}
-	*dstPtr = *m
-	return true
+	*dst = *p
+	return
 }
 
+func safeCopyPropPtr[T any](v any, dst **T, err *error) {
+	if err != nil && *err != nil {
+		return
+	}
+	if v == nil || dst == nil {
+		return
+	}
+	p, ok := v.(*T)
+	if !ok {
+		*err = errors.New("invalid property value convert")
+		return
+	}
+	*dst = p
+	return
+}
+
+// ReadPacketProperties parses the available properties of the PacketType
+// from the Reader and returns a key-value pair containing the PropertyID and pointer value.
+// If a property that does not belong to the PacketType is read,
+// a reason code of MalformedPacket is returned.
 func ReadPacketProperties(r io.Reader, packetType PacketType) (map[PropertyID]any, error) {
 	return readAllProperties(r, func(id PropertyID) error {
 		if !ValidatePropID(id, packetType) {
@@ -148,16 +168,30 @@ func ReadPacketProperties(r io.Reader, packetType PacketType) (map[PropertyID]an
 	})
 }
 
+// ReadWillProperties parses WillMessage property data from Reader
+// and returns a key-value pair containing PropertyID and value pointer.
+// If the WillMessage does not support the read property,
+// an error containing the reason code MalformedPacket is returned.
 func ReadWillProperties(r io.Reader) (map[PropertyID]any, error) {
 	return readAllProperties(r, func(id PropertyID) error {
 		if !ValidateWillPropID(id) {
-			return NewReasonCodeError(ProtocolError, fmt.Sprintf("invalid property %d for will properties", id))
+			return NewReasonCodeError(MalformedPacket, fmt.Sprintf("invalid property %d for will properties", id))
 		}
 		return nil
 	})
 }
 
-func writePropIdAndValue(w io.Writer, id PropertyID, value any, err *error) {
+type propValueType interface {
+	*byte | *uint16 | *uint32 | *bool | *string | *[]byte
+}
+
+func writePropIdAndValue[T propValueType](w io.Writer, id PropertyID, value T, err *error) {
+	if err != nil && *err != nil {
+		return
+	}
+	if value == nil {
+		return
+	}
 	unsafeWriteWrap(w, (*byte)(&id), err)
 	unsafeWriteWrap(w, value, err)
 }

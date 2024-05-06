@@ -16,7 +16,11 @@
 
 package packets
 
-import "io"
+import "C"
+import (
+	"bytes"
+	"io"
+)
 
 type Connack struct {
 	ReasonCode     byte
@@ -31,7 +35,6 @@ func (c *Connack) Unpack(r io.Reader) error {
 		return err
 	}
 	c.SessionPresent = flags&0x01 > 0
-
 	if err := unsafeReadByte(r, &c.ReasonCode); err != nil {
 		return err
 	}
@@ -39,32 +42,85 @@ func (c *Connack) Unpack(r io.Reader) error {
 }
 
 type ConnackProperties struct {
+	//representing the Session Expiry Interval in seconds
+	//If the Session Expiry Interval is absent the value 0 is used. If it is set to 0, or is absent, the Session ends when the Network Connection is closed.
+	//If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session does not expire.
 	SessionExpiryInterval uint32
-	AssignedClientID      string
-	ServerKeepAlive       uint16
-	AuthMethod            string
-	AuthData              []byte
-	ResponseInfo          string
-	ServerReference       string
-	ReasonString          string
 	ReceiveMaximum        uint16
-	TopicAliasMaximum     uint16
 	MaximumQoS            *byte
-	RetainAvailable       *bool
-	UserProps             UserProperties
-	MaximumPacketSize     uint32
-	WildcardSubAvailable  *bool
-	SubIdAvailable        bool
-	SharedSubAvailable    bool
+	// Indicates whether the server supports retained messages.
+	// If the value is not present, it means retained messages are supported.
+	RetainAvailable *bool
+	// Indicates the maximum packet size accepted by the server.
+	// If the value does not exist, there is no limit on the size.
+	MaximumPacketSize *uint32
+	TopicAliasMaximum uint16
+	ReasonString      string
+	AssignedClientID  string
+	//Indicates whether the server supports wildcard subscriptions.
+	//A value of false indicates that it is not supported.
+	//A value of true or does not exist indicates that it is supported.
+	WildcardSubAvailable *bool
+
+	//Represents the server-assigned keep-alive time. If the value is present,
+	// the client must use this value as the KeepAlive time instead of the corresponding
+	// value sent in the CONNECT packet.(in second)
+	ServerKeepAlive *uint16
+	AuthMethod      string
+	AuthData        []byte
+	ResponseInfo    string
+	ServerReference string
+	UserProps       UserProperties
+	//Indicates whether the server supports subscription identifiers.
+	// If the value is true or does not exist,
+	// it means it is supported, otherwise it is not supported.
+	SubIdAvailable     *bool
+	SharedSubAvailable *bool
 }
 
 func (c *ConnackProperties) Pack(w io.Writer) error {
-	if c.MaximumQoS != nil {
-		if *c.MaximumQoS != 0 && *c.MaximumQoS != 1 {
-			return newInvalidPropValueError(PropMaximumQOS, *c.MaximumQoS)
-		}
+	buf := bytes.NewBuffer([]byte{})
+	var err error
+
+	if c.SessionExpiryInterval > 0 {
+		writePropIdAndValue(buf, PropSessionExpiryInterval, &c.SessionExpiryInterval, &err)
 	}
-	return nil
+	if c.ReceiveMaximum > 0 && c.ReceiveMaximum < 65535 {
+		writePropIdAndValue(buf, PropReceiveMaximum, &c.ReceiveMaximum, &err)
+	}
+	writePropIdAndValue(buf, PropMaximumQOS, c.MaximumQoS, &err)
+	writePropIdAndValue(buf, PropRetainAvailable, c.RetainAvailable, &err)
+	writePropIdAndValue(buf, PropMaximumPacketSize, c.MaximumPacketSize, &err)
+
+	if c.AssignedClientID != "" {
+		writePropIdAndValue(buf, PropAssignedClientID, &c.AssignedClientID, &err)
+	}
+	if c.TopicAliasMaximum > 0 {
+		writePropIdAndValue(buf, PropTopicAliasMaximum, &c.TopicAliasMaximum, &err)
+	}
+	if c.ReasonString != "" {
+		writePropIdAndValue(buf, PropReasonString, &c.ReasonString, &err)
+	}
+	writePropIdAndValue(buf, PropWildcardSubAvailable, c.WildcardSubAvailable, &err)
+	writePropIdAndValue(buf, PropSubIDAvailable, c.SubIdAvailable, &err)
+	writePropIdAndValue(buf, PropSharedSubAvailable, c.SharedSubAvailable, &err)
+	writePropIdAndValue(buf, PropServerKeepAlive, c.ServerKeepAlive, &err)
+
+	if c.ResponseInfo != "" {
+		writePropIdAndValue(buf, PropResponseInfo, &c.ResponseInfo, &err)
+	}
+	if c.ServerReference != "" {
+		writePropIdAndValue(buf, PropServerReference, &c.ServerReference, &err)
+	}
+	if c.AuthMethod != "" {
+		writePropIdAndValue(buf, PropAuthMethod, &c.AuthMethod, &err)
+		writePropIdAndValue(buf, PropAuthData, &c.AuthData, &err)
+	}
+	writeUserPropsData(w, c.UserProps, &err)
+	if err != nil {
+		return err
+	}
+	return writePropertiesData(w, buf.Bytes())
 }
 
 func (c *ConnackProperties) Unpack(r io.Reader) error {
@@ -72,22 +128,46 @@ func (c *ConnackProperties) Unpack(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	CopyPropPtrValue(ps, PropSessionExpiryInterval, &c.SessionExpiryInterval, 0)
-	CopyPropPtrValue(ps, PropReceiveMaximum, &c.ReceiveMaximum, 65535)
-	CopyPropPtrValue(ps, PropMaximumQOS, c.MaximumQoS, 2)
-	CopyPropPtrValue(ps, PropRetainAvailable, c.RetainAvailable, true)
-	CopyPropPtrValue(ps, PropMaximumPacketSize, &c.MaximumPacketSize, uint32(0))
-	CopyPropPtrValue(ps, PropAssignedClientID, &c.AssignedClientID, "")
-	CopyPropPtrValue(ps, PropTopicAliasMaximum, &c.TopicAliasMaximum, uint16(0))
-	CopyPropPtrValue(ps, PropReasonString, &c.ReasonString, "")
-	CopyPropPtrValue(ps, PropWildcardSubAvailable, c.WildcardSubAvailable, false)
+	c.ReceiveMaximum = 65535
 
-	//load
-
-	CopyPropPtrValue(ps, PropAuthMethod, &c.AuthMethod, "")
-	CopyPropPtrValue(ps, PropAuthData, &c.AuthData, nil)
-	if c.AuthMethod == "" && c.AuthData != nil {
-		return NewReasonCodeError(ProtocolError, "AuthData accidentally included when AuthMethod is empty")
+	for id, ptr := range ps {
+		if err != nil {
+			return err
+		}
+		switch id {
+		case PropSessionExpiryInterval:
+			safeCopyPropValue(ptr, &c.SessionExpiryInterval, &err)
+		case PropReceiveMaximum:
+			safeCopyPropValue(ptr, &c.ReceiveMaximum, &err)
+		case PropMaximumQOS:
+			safeCopyPropPtr(ptr, &c.MaximumQoS, &err)
+		case PropRetainAvailable:
+			safeCopyPropPtr(ptr, &c.RetainAvailable, &err)
+		case PropMaximumPacketSize:
+			safeCopyPropPtr(ptr, &c.MaximumPacketSize, &err)
+		case PropAssignedClientID:
+			safeCopyPropValue(ptr, &c.AssignedClientID, &err)
+		case PropTopicAliasMaximum:
+			safeCopyPropValue(ptr, &c.TopicAliasMaximum, &err)
+		case PropReasonString:
+			safeCopyPropValue(ptr, &c.ReasonString, &err)
+		case PropWildcardSubAvailable:
+			safeCopyPropPtr(ptr, &c.WildcardSubAvailable, &err)
+		case PropServerKeepAlive:
+			safeCopyPropPtr(ptr, &c.ServerKeepAlive, &err)
+		case PropResponseInfo:
+			safeCopyPropValue(ptr, &c.ResponseInfo, &err)
+		case PropServerReference:
+			safeCopyPropValue(ptr, &c.ServerReference, &err)
+		case PropSubIDAvailable:
+			safeCopyPropPtr(ptr, &c.SubIdAvailable, &err)
+		case PropSharedSubAvailable:
+			safeCopyPropPtr(ptr, &c.SharedSubAvailable, &err)
+		case PropAuthMethod:
+			safeCopyPropValue(ptr, &c.AuthMethod, &err)
+		case PropAuthData:
+			safeCopyPropValue(ptr, &c.AuthData, &err)
+		}
 	}
 	up, ok := ps[PropUserProperty]
 	if ok {

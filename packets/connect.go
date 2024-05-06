@@ -37,10 +37,11 @@ const (
 	ProtocolMQTT   ProtocolName = "MQTT"
 )
 
+// Connect is
 type Connect struct {
 	ProtocolName    ProtocolName
 	ProtocolVersion ProtocolVersion
-	KeepAlive       uint16
+	KeepAlive       uint16 //in second
 	Properties      *ConnProperties
 	ClientID        string
 	CleanStart      bool
@@ -205,21 +206,32 @@ func (c *Connect) Unpack(r io.Reader) error {
 //
 // [CONNECT Properties]: https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901046
 type ConnProperties struct {
-	//the Four Byte Integer representing the Session Expiry Interval in seconds.
+	//representing the Session Expiry Interval in seconds
 	//If the Session Expiry Interval is absent the value 0 is used. If it is set to 0, or is absent, the Session ends when the Network Connection is closed.
 	//If the Session Expiry Interval is 0xFFFFFFFF (UINT_MAX), the Session does not expire.
 	SessionExpiryInterval uint32
-	// the Two Byte Integer representing the Receive Maximum value.
+	// representing the Receive Maximum value.
 	// The Client uses this value to limit the number of QoS 1 and QoS 2 publications that it is willing to process concurrently. There is no mechanism to limit the QoS 0 publications that the Server might try to send.
 	// The value of Receive Maximum applies only to the current Network Connection. If the Receive Maximum value is absent then its value defaults to 65,535.
-	ReceiveMaximum      uint16
-	MaximumPacketSize   uint32
-	TopicAliasMaximum   uint16
+	ReceiveMaximum uint16
+	//representing the Maximum Packet Size the Client is willing to accept
+	MaximumPacketSize *uint32
+	//Indicates the maximum number of acceptable topic aliases.
+	//Defaults to 0 when the property is not present.
+	//A value of 0 indicates that no topic aliases will be accepted on this connection.
+	TopicAliasMaximum uint16
+	// Indicates whether the client requests the server to include response information
+	// in the CONNACK message. When the value is true, the server may include ResponseInfo in CONNACK.
+	// When the property value does not exist, the default is false, indicating that no response information is included.
 	RequestResponseInfo bool
-	RequestProblemInfo  *bool
-	UserProps           UserProperties
-	AuthMethod          string
-	AuthData            []byte
+	// Indicates whether to send ReasonString or UserProperties when the request fails.
+	// When the value is empty, the server defaults to true.
+	RequestProblemInfo *bool
+	// User-defined properties, which is a string key-value pair
+	UserProps UserProperties
+	// Identifier used for the authentication method
+	AuthMethod string
+	AuthData   []byte
 }
 
 func (c *ConnProperties) Unpack(r io.Reader) error {
@@ -227,23 +239,30 @@ func (c *ConnProperties) Unpack(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	CopyPropPtrValue(ps, PropSessionExpiryInterval, &c.SessionExpiryInterval, uint32(0))
-	CopyPropPtrValue(ps, PropReceiveMaximum, &c.ReceiveMaximum, uint16(65535))
-	CopyPropPtrValue(ps, PropMaximumPacketSize, &c.MaximumPacketSize, uint32(0))
-	CopyPropPtrValue(ps, PropTopicAliasMaximum, &c.TopicAliasMaximum, uint16(0))
-	CopyPropPtrValue(ps, PropRequestResponseInfo, &c.RequestResponseInfo, false)
-
-	rpi := true
-	exist := CopyPropPtrValue(ps, PropRequestProblemInfo, &rpi, true)
-	if exist {
-		c.RequestProblemInfo = &rpi
+	for id, ptr := range ps {
+		if err != nil {
+			return err
+		}
+		switch id {
+		case PropSessionExpiryInterval:
+			safeCopyPropValue(ptr, &c.SessionExpiryInterval, &err)
+		case PropReceiveMaximum:
+			safeCopyPropValue(ptr, &c.ReceiveMaximum, &err)
+		case PropMaximumPacketSize:
+			safeCopyPropPtr(ptr, &c.MaximumPacketSize, &err)
+		case PropTopicAliasMaximum:
+			safeCopyPropValue(ptr, &c.TopicAliasMaximum, &err)
+		case PropRequestResponseInfo:
+			safeCopyPropValue(ptr, &c.RequestResponseInfo, &err)
+		case PropRequestProblemInfo:
+			safeCopyPropPtr(ptr, &c.RequestProblemInfo, &err)
+		case PropAuthMethod:
+			safeCopyPropValue(ptr, &c.AuthMethod, &err)
+		case PropAuthData:
+			safeCopyPropValue(ptr, &c.AuthData, &err)
+		}
 	}
 
-	CopyPropPtrValue(ps, PropAuthMethod, &c.AuthMethod, "")
-	CopyPropPtrValue(ps, PropAuthData, &c.AuthData, nil)
-	if c.AuthMethod == "" && c.AuthData != nil {
-		return NewReasonCodeError(ProtocolError, "AuthData accidentally included when AuthMethod is empty")
-	}
 	up, ok := ps[PropUserProperty]
 	if ok {
 		c.UserProps = up.(UserProperties)
@@ -261,18 +280,17 @@ func (c *ConnProperties) Pack(w io.Writer) error {
 	if c.ReceiveMaximum > 0 && c.ReceiveMaximum < 65535 {
 		writePropIdAndValue(buf, PropReceiveMaximum, &c.ReceiveMaximum, &err)
 	}
-	if c.MaximumPacketSize > 0 {
-		writePropIdAndValue(buf, PropMaximumPacketSize, &c.MaximumPacketSize, &err)
-	}
+
+	writePropIdAndValue(buf, PropMaximumPacketSize, c.MaximumPacketSize, &err)
+
 	if c.TopicAliasMaximum > 0 {
 		writePropIdAndValue(buf, PropTopicAliasMaximum, &c.TopicAliasMaximum, &err)
 	}
 	if c.RequestResponseInfo {
 		writePropIdAndValue(buf, PropRequestResponseInfo, &c.RequestResponseInfo, &err)
 	}
-	if c.RequestProblemInfo != nil {
-		writePropIdAndValue(buf, PropRequestProblemInfo, c.RequestProblemInfo, &err)
-	}
+	writePropIdAndValue(buf, PropRequestProblemInfo, c.RequestProblemInfo, &err)
+
 	if c.AuthMethod != "" {
 		writePropIdAndValue(buf, PropAuthMethod, &c.AuthMethod, &err)
 		writePropIdAndValue(buf, PropAuthData, &c.AuthData, &err)
@@ -285,9 +303,11 @@ func (c *ConnProperties) Pack(w io.Writer) error {
 }
 
 type WillProperties struct {
-	WillDelayInterval      uint32
-	PayloadFormatIndicator bool   // Indicates whether the payload is UTF-8 encoded character data
-	MessageExpiryInterval  uint32 // If the value is greater than 0, it represents the life cycle of the message (in seconds)
+	// Will delay interval (in seconds), defaults to 0 when the property does not exist
+	WillDelayInterval uint32
+	//Indicates whether the payload is UTF-8 encoded character data
+	PayloadFormatIndicator bool
+	MessageExpiryInterval  *uint32
 	ContentType            string
 	ResponseTopic          string
 	CorrelationData        []byte
@@ -299,13 +319,25 @@ func (w *WillProperties) Unpack(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	CopyPropPtrValue(ps, PropWillDelayInterval, &w.WillDelayInterval, uint32(0))
-	CopyPropPtrValue(ps, PropPayloadFormat, &w.PayloadFormatIndicator, false)
-	CopyPropPtrValue(ps, PropMessageExpiryInterval, &w.MessageExpiryInterval, uint32(0))
-	CopyPropPtrValue(ps, PropContentType, &w.ContentType, "")
-	CopyPropPtrValue(ps, PropResponseTopic, &w.ResponseTopic, "")
-	CopyPropPtrValue(ps, PropCorrelationData, &w.CorrelationData, nil)
-
+	for id, ptr := range ps {
+		if err != nil {
+			return err
+		}
+		switch id {
+		case PropWillDelayInterval:
+			safeCopyPropValue(ptr, &w.WillDelayInterval, &err)
+		case PropPayloadFormat:
+			safeCopyPropValue(ptr, &w.PayloadFormatIndicator, &err)
+		case PropMessageExpiryInterval:
+			safeCopyPropPtr(ptr, &w.MessageExpiryInterval, &err)
+		case PropContentType:
+			safeCopyPropValue(ptr, &w.ContentType, &err)
+		case PropResponseTopic:
+			safeCopyPropValue(ptr, &w.ResponseTopic, &err)
+		case PropCorrelationData:
+			safeCopyPropValue(ptr, &w.CorrelationData, &err)
+		}
+	}
 	up, ok := ps[PropUserProperty]
 	if ok {
 		w.UserProps = up.(UserProperties)
@@ -323,9 +355,8 @@ func (w *WillProperties) Pack(wr io.Writer) error {
 	if w.PayloadFormatIndicator {
 		writePropIdAndValue(buf, PropPayloadFormat, &w.PayloadFormatIndicator, &err)
 	}
-	if w.MessageExpiryInterval > 0 {
-		writePropIdAndValue(buf, PropMessageExpiryInterval, &w.MessageExpiryInterval, &err)
-	}
+	writePropIdAndValue(buf, PropMessageExpiryInterval, w.MessageExpiryInterval, &err)
+
 	if w.ContentType != "" {
 		writePropIdAndValue(buf, PropContentType, &w.ContentType, &err)
 	}

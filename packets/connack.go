@@ -23,22 +23,53 @@ import (
 )
 
 type Connack struct {
-	ReasonCode     byte
+	ReasonCode     ReasonCode
 	SessionPresent bool //Used to indicate whether the server is using an existing session to resume communication with the client. Session Present may be 1 only if the client sets Clean Start to 0 in the CONNECT connection
 	Properties     *ConnackProperties
 }
 
-func (c *Connack) Unpack(r io.Reader) error {
+func (c *Connack) Pack(w io.Writer, header *FixedHeader) error {
+	var err error
+	b := [2]byte{0, byte(c.ReasonCode)}
+	if c.SessionPresent {
+		b[0] = 1
+	}
+	if _, err = w.Write(b[:]); err != nil {
+		return err
+	}
+	if err = packPacketProperties(w, c.Properties, header.version); err != nil {
+		return err
+	}
+	return err
+}
+
+func (c *Connack) Unpack(r io.Reader, header *FixedHeader) error {
 	flags := byte(0)
 	var err error
 	if err = unsafeReadByte(r, &flags); err != nil {
 		return err
 	}
 	c.SessionPresent = flags&0x01 > 0
-	if err := unsafeReadByte(r, &c.ReasonCode); err != nil {
+	if err := unsafeReadByte(r, (*byte)(&c.ReasonCode)); err != nil {
 		return err
 	}
-	return c.Properties.Unpack(r)
+	if header.version >= ProtocolVersion5 {
+		//read props
+		props := &ConnackProperties{}
+		if err = props.Unpack(r); err != nil {
+			return err
+		}
+		c.Properties = props
+	}
+	return nil
+}
+
+func (c *Connack) Type() PacketType {
+	return CONNACK
+}
+
+func (c *Connack) ID() PacketID {
+	return 0
 }
 
 type ConnackProperties struct {
@@ -173,5 +204,5 @@ func (c *ConnackProperties) Unpack(r io.Reader) error {
 	if ok {
 		c.UserProps = up.(UserProperties)
 	}
-	return nil
+	return err
 }

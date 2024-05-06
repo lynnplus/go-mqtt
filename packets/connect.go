@@ -18,7 +18,6 @@ package packets
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 )
 
@@ -58,7 +57,15 @@ type WillMessage struct {
 	Properties *WillProperties
 }
 
-func (c *Connect) Pack(w io.Writer) error {
+func (c *Connect) Type() PacketType {
+	return CONNECT
+}
+
+func (c *Connect) ID() PacketID {
+	return 0
+}
+
+func (c *Connect) Pack(w io.Writer, header *FixedHeader) error {
 	var err error
 	if err = unsafeWriteString(w, (*string)(&c.ProtocolName)); err != nil {
 		return err
@@ -73,26 +80,99 @@ func (c *Connect) Pack(w io.Writer) error {
 	if err = unsafeWriteUint16(w, &c.KeepAlive); err != nil {
 		return err
 	}
-	if c.Properties != nil {
-		if c.ProtocolVersion < ProtocolVersion5 {
-			return NewReasonCodeError(ProtocolError, "Protocol version 3 does not support packet properties")
-		}
-		if err = c.Properties.Pack(w); err != nil {
-			return err
-		}
+	if err = packPacketProperties(w, c.Properties, header.version); err != nil {
+		return err
 	}
 	if err = unsafeWriteString(w, &c.ClientID); err != nil {
 		return err
 	}
 	if c.hasWillMsg() {
 		will := c.WillMessage
-		if err = will.Properties.Pack(w); err != nil {
+		if err = packPacketProperties(w, will.Properties, header.version); err != nil {
 			return err
 		}
 		if err := unsafeWriteString(w, &will.Topic); err != nil {
 			return err
 		}
 		if err := unsafeWriteBytes(w, &will.Payload); err != nil {
+			return err
+		}
+	}
+	if c.Username != "" {
+		if err = unsafeWriteString(w, &c.Username); err != nil {
+			return err
+		}
+	}
+	if len(c.Password) > 0 {
+		if err := unsafeWriteBytes(w, &c.Password); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Unpack read the packet bytes from io.Reader and decodes it into the packet struct.
+func (c *Connect) Unpack(r io.Reader, header *FixedHeader) error {
+	var err error
+	if err = unsafeReadString(r, (*string)(&c.ProtocolName)); err != nil {
+		return err
+	}
+	if err = unsafeReadByte(r, (*byte)(&c.ProtocolVersion)); err != nil {
+		return err
+	}
+
+	flags := byte(0)
+	c.CleanStart = 1&(flags>>1) > 0
+
+	if err = unsafeReadByte(r, &flags); err != nil {
+		return err
+	}
+	if err = unsafeReadUint16(r, &c.KeepAlive); err != nil {
+		return err
+	}
+	//Properties x bytes
+	if header.version >= ProtocolVersion5 {
+		//read props
+		props := &ConnProperties{}
+		if err = props.Unpack(r); err != nil {
+			return err
+		}
+		c.Properties = props
+	}
+	//read payload
+	if err = unsafeReadString(r, &c.ClientID); err != nil {
+		return err
+	}
+
+	//will flag set
+	if 1&(flags>>2) > 0 {
+		will := &WillMessage{}
+		will.Retain = 1&(flags>>5) > 0
+		will.Qos = 3 & (flags >> 3)
+		if header.version >= ProtocolVersion5 {
+			//read props
+			props := &WillProperties{}
+			if err = props.Unpack(r); err != nil {
+				return err
+			}
+			will.Properties = props
+		}
+		if err = unsafeReadString(r, &will.Topic); err != nil {
+			return err
+		}
+		if err = unsafeReadBytes(r, &will.Payload); err != nil {
+			return err
+		}
+		c.WillMessage = will
+	}
+
+	if 1&(flags>>7) > 0 {
+		if err := unsafeReadString(r, &c.Username); err != nil {
+			return err
+		}
+	}
+	if 1&(flags>>6) > 0 {
+		if err := unsafeReadBytes(r, &c.Password); err != nil {
 			return err
 		}
 	}
@@ -125,81 +205,6 @@ func (c *Connect) packFlags(w io.Writer) error {
 		flags |= 0x01 << 1
 	}
 	return unsafeWriteByte(w, &flags)
-}
-
-// Unpack read the packet bytes from io.Reader and decodes it into the packet struct.
-func (c *Connect) Unpack(r io.Reader) error {
-	var err error
-	if err = unsafeReadString(r, (*string)(&c.ProtocolName)); err != nil {
-		return err
-	}
-	if err = unsafeReadByte(r, (*byte)(&c.ProtocolVersion)); err != nil {
-		return err
-	}
-
-	if c.ProtocolVersion >= ProtocolVersion311 && c.ProtocolName != ProtocolMQTT {
-		return NewReasonCodeError(UnsupportedProtocolVersion, fmt.Sprintf("protocol version %d mismatch name %s", c.ProtocolVersion, ProtocolMQTT))
-	}
-	if c.ProtocolVersion == ProtocolVersion31 || c.ProtocolVersion > ProtocolVersion5 {
-		return NewReasonCodeError(UnsupportedProtocolVersion, "")
-	}
-
-	flags := byte(0)
-	c.CleanStart = 1&(flags>>1) > 0
-
-	if err = unsafeReadByte(r, &flags); err != nil {
-		return err
-	}
-	if err = unsafeReadUint16(r, &c.KeepAlive); err != nil {
-		return err
-	}
-	//Properties x bytes
-	if c.ProtocolVersion >= ProtocolVersion5 {
-		//read props
-		props := &ConnProperties{}
-		if err = props.Unpack(r); err != nil {
-			return err
-		}
-		c.Properties = props
-	}
-	//read payload
-	if err = unsafeReadString(r, &c.ClientID); err != nil {
-		return err
-	}
-
-	//will flag set
-	if 1&(flags>>2) > 0 {
-		will := &WillMessage{}
-		will.Retain = 1&(flags>>5) > 0
-		will.Qos = 3 & (flags >> 3)
-		if c.ProtocolVersion >= ProtocolVersion5 {
-			//read props
-			props := &WillProperties{}
-			if err = props.Unpack(r); err != nil {
-				return err
-			}
-			will.Properties = props
-		}
-		if err = unsafeReadString(r, &will.Topic); err != nil {
-			return err
-		}
-		if err = unsafeReadBytes(r, &will.Payload); err != nil {
-			return err
-		}
-		c.WillMessage = will
-	}
-
-	if 1&(flags>>7) > 0 {
-		if err := unsafeReadString(r, &c.Username); err != nil {
-			return err
-		}
-	}
-	if 1&(flags>>6) > 0 {
-		if err := unsafeReadBytes(r, &c.Password); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // ConnProperties is a struct for the Connect properties,reference doc: "[CONNECT Properties]"
@@ -267,7 +272,7 @@ func (c *ConnProperties) Unpack(r io.Reader) error {
 	if ok {
 		c.UserProps = up.(UserProperties)
 	}
-	return nil
+	return err
 }
 
 func (c *ConnProperties) Pack(w io.Writer) error {
@@ -342,7 +347,7 @@ func (w *WillProperties) Unpack(r io.Reader) error {
 	if ok {
 		w.UserProps = up.(UserProperties)
 	}
-	return nil
+	return err
 }
 
 func (w *WillProperties) Pack(wr io.Writer) error {

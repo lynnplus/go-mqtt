@@ -135,6 +135,16 @@ func unsafeWriteUint16(w io.Writer, v *uint16) error {
 	return err
 }
 
+func unsafeWriteVbi(w io.Writer, v *int) error {
+	b := [4]byte{}
+	n, e := encodeVBI(*v, b[:])
+	if e != nil {
+		return e
+	}
+	_, e = w.Write(b[:n])
+	return e
+}
+
 func unsafeWriteUint32(w io.Writer, v *uint32) error {
 	cc := unsafe.Slice((*byte)(unsafe.Pointer(v)), 4)
 	for i := 3; i >= 0; i-- {
@@ -168,6 +178,8 @@ func unsafeWriteWrap(w io.Writer, dst any, err *error) {
 		*err = unsafeWriteUint32(w, v)
 	case *uint16:
 		*err = unsafeWriteUint16(w, v)
+	case *int:
+		*err = unsafeWriteVbi(w, v)
 	default:
 		panic(fmt.Sprintf("unsupported write type %v", v))
 	}

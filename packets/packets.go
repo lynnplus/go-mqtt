@@ -88,9 +88,13 @@ const (
 
 type Packet interface {
 	// Pack encodes the packet struct into bytes and writes it into io.Writer.
-	Pack(w io.Writer) error
+	Pack(w io.Writer, header *FixedHeader) error
 	// Unpack read the packet bytes from io.Reader and decodes it into the packet struct
-	Unpack(r io.Reader) error
+	Unpack(r io.Reader, header *FixedHeader) error
+	// Type returns the packet type of this packet
+	Type() PacketType
+	// ID returns the current PacketID. If the packet does not support PacketID, returns 0.
+	ID() PacketID
 }
 
 // FixedHeader represents the FixedHeader of the MQTT packet
@@ -101,6 +105,7 @@ type FixedHeader struct {
 	Flags        byte
 	RemainLength int
 	buf          [5]byte
+	version      ProtocolVersion
 }
 
 func (fh *FixedHeader) ReadFrom(r io.Reader) (int64, error) {
@@ -110,10 +115,6 @@ func (fh *FixedHeader) ReadFrom(r io.Reader) (int64, error) {
 	}
 	fh.PacketType = PacketType(fh.buf[0] >> 4)
 	fh.Flags = fh.buf[0] & 0x0F
-
-	if !fh.PacketType.IsValid() {
-		return int64(n), fmt.Errorf("unknown packet type %d", fh.PacketType)
-	}
 	fh.RemainLength, n, err = decodeVBI(r, fh.buf[1:])
 	return int64(n + 1), err
 }
@@ -130,20 +131,39 @@ func (fh *FixedHeader) WriteTo(w io.Writer) (int64, error) {
 	return int64(1 + n), nil
 }
 
-type Content interface {
+// ValidateHeaderFlags takes a byte value and a PacketType and returns
+// a bool indicating if that flags value is valid for that PacketType
+func ValidateHeaderFlags(flags byte, pt PacketType) bool {
+	if pt == SUBSCRIBE || pt == UNSUBSCRIBE || pt == PUBREL {
+		return flags == 2
+	}
+	if pt == PUBLISH {
+		return true
+	}
+	return flags == 0
 }
 
-func Read(r io.Reader) (Packet, error) {
-	header := &FixedHeader{}
+func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
+	header := &FixedHeader{version: version}
 	if _, err := header.ReadFrom(r); err != nil {
 		return nil, err
 	}
-	var content Content
+	if !header.PacketType.IsValid() {
+		return nil, NewReasonCodeError(ProtocolError, fmt.Sprintf("unknown packet type %d", header.PacketType))
+	}
+	if version < ProtocolVersion5 && header.PacketType == AUTH {
+		return nil, NewReasonCodeError(ProtocolError, "the current version does not support AUTH packets")
+	}
+	if !ValidateHeaderFlags(header.Flags, header.PacketType) {
+		return nil, ErrInvalidPktFlags
+	}
 
+	var pkt Packet
 	switch header.PacketType {
 	case CONNECT:
-		content = &Connect{}
+		pkt = &Connect{}
 	case CONNACK:
+		pkt = &Connack{}
 	case PUBLISH:
 	case PUBACK:
 	case PUBREC:
@@ -154,13 +174,17 @@ func Read(r io.Reader) (Packet, error) {
 	case UNSUBSCRIBE:
 	case UNSUBACK:
 	case PINGREQ:
+		pkt = &Pingreq{}
 	case PINGRESP:
+		pkt = &Pingresp{}
 	case DISCONNECT:
 	case AUTH:
 	}
 
-	fmt.Println(content)
-	return nil, nil
+	if err := pkt.Unpack(r, header); err != nil {
+		return nil, err
+	}
+	return pkt, nil
 }
 
 // encode to bytes for variable byte integer,maximum is 2^28 - 1(268,435,455)B,256MB

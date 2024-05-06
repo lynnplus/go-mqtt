@@ -200,6 +200,12 @@ func (r *reasonCodeError) Is(target error) bool {
 	return false
 }
 
+var (
+	ErrUnsupportedValueOnVersion = NewReasonCodeError(ProtocolError, "Packet content field not supported by current version")
+	ErrUnsupportedPropSetup      = NewReasonCodeError(ProtocolError, "The current version does not support packet properties")
+	ErrInvalidPktFlags           = NewReasonCodeError(MalformedPacket, "Invalid packet control flags")
+)
+
 // NewReasonCodeError returns a new error based on the reason code,
 // If the message parameter is a non-empty string, the new error will use this message,
 // otherwise the built-in default message will be used.

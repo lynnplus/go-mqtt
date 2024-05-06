@@ -23,6 +23,22 @@ import (
 	"unsafe"
 )
 
+type Packable interface {
+	Pack(w io.Writer) error
+	Unpack(r io.Reader) error
+}
+
+func packPacketProperties(w io.Writer, props Packable, version ProtocolVersion) error {
+	if version < ProtocolVersion5 {
+		return ErrUnsupportedPropSetup
+	}
+	if props == nil {
+		_, err := w.Write([]byte{0})
+		return err
+	}
+	return props.Pack(w)
+}
+
 // PropertyID is the identifier for MQTT properties,only MQTT v5 supported,reference doc: "[Properties]"
 //
 // [Properties]: https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html#_Toc3901027
@@ -182,7 +198,7 @@ func ReadWillProperties(r io.Reader) (map[PropertyID]any, error) {
 }
 
 type propValueType interface {
-	*byte | *uint16 | *uint32 | *bool | *string | *[]byte
+	*byte | *uint16 | *uint32 | *bool | *string | *[]byte | *int
 }
 
 func writePropIdAndValue[T propValueType](w io.Writer, id PropertyID, value T, err *error) {
@@ -220,6 +236,9 @@ func writePropertiesData(w io.Writer, data []byte) error {
 	}
 	if _, err = w.Write(vbi[:n]); err != nil {
 		return err
+	}
+	if len(data) == 0 {
+		return nil
 	}
 	_, err = w.Write(data)
 	return err

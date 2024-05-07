@@ -19,6 +19,7 @@
 package packets
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -146,7 +147,8 @@ func ValidateHeaderFlags(flags byte, pt PacketType) bool {
 	return flags == 0
 }
 
-func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
+// ReadFrom reads a Packet from r according to the corresponding version protocol requirements
+func ReadFrom(r io.Reader, version ProtocolVersion) (Packet, error) {
 	header := &FixedHeader{version: version}
 	if _, err := header.ReadFrom(r); err != nil {
 		return nil, err
@@ -200,6 +202,23 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 		return nil, err
 	}
 	return pkt, nil
+}
+
+// WriteTo writes pkt to w according to the protocol requirements of the corresponding version.
+func WriteTo(w io.Writer, pkt Packet, version ProtocolVersion) error {
+	header := &FixedHeader{PacketType: pkt.Type(), version: version}
+	buf := bytes.NewBuffer(make([]byte, 0, 2))
+	if err := pkt.Pack(buf, header); err != nil {
+		return err
+	}
+	header.RemainLength = buf.Len()
+	if _, err := header.WriteTo(w); err != nil {
+		return err
+	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // encode to bytes for variable byte integer,maximum is 2^28 - 1(268,435,455)B,256MB

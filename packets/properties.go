@@ -78,12 +78,6 @@ const (
 	PropSharedSubAvailable    PropertyID = 42 // Property identifier of the shared subscription available prop
 )
 
-// UserProperties is a map for the User Properties.
-// although user attributes are allowed to appear more than once in the protocol,
-// various broker servers handle repeated attributes differently, at the same time,
-// in order to eliminate ambiguity, user attributes are defined as a map with a non-repeatable key.
-type UserProperties map[string]string
-
 var validPacketProperties = map[PropertyID]map[PacketType]uint8{
 	PropPayloadFormat:         {PUBLISH: 1},
 	PropMessageExpiryInterval: {PUBLISH: 1},
@@ -222,13 +216,7 @@ func writeUserPropsData(w io.Writer, props UserProperties, err *error) {
 	if err != nil && *err != nil {
 		return
 	}
-	id := PropUserProperty
-	unsafeWriteWrap(w, (*byte)(&id), err)
-	for k, v := range props {
-		unsafeWriteWrap(w, (*byte)(&id), err)
-		unsafeWriteWrap(w, &k, err)
-		unsafeWriteWrap(w, &v, err)
-	}
+	_, *err = props.WriteTo(w)
 }
 
 func writePropertiesData(w io.Writer, data []byte) error {
@@ -341,7 +329,7 @@ func readAllProperties(r io.Reader, validate func(PropertyID) error) (map[Proper
 			var k, v string
 			unsafeReadWrap(r, &k, &err)
 			unsafeReadWrap(r, &v, &err)
-			u[k] = v
+			u.Add(k, v)
 			totalSize -= 4 + len(k) + len(v)
 		default:
 			return nil, NewReasonCodeError(ProtocolError, fmt.Sprintf("unknown prop identifier %v", propId))

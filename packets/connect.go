@@ -371,7 +371,7 @@ func (w *WillProperties) Pack(wr io.Writer) error {
 	if len(w.CorrelationData) > 0 {
 		writePropIdAndValue(buf, PropCorrelationData, &w.CorrelationData, &err)
 	}
-	writeUserPropsData(wr, w.UserProps, &err)
+	writeUserPropsData(buf, w.UserProps, &err)
 	if err != nil {
 		return err
 	}

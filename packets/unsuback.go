@@ -18,19 +18,62 @@ package packets
 
 import (
 	"io"
+	"unsafe"
 )
 
+type UnsubackProperties = PubCommProperties
+
 type Unsuback struct {
+	PacketID    PacketID
+	ReasonCodes []ReasonCode
+	Properties  *UnsubackProperties
 }
 
 func (u *Unsuback) Pack(w io.Writer, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	var err error
+	if err = unsafeWriteUint16(w, &u.PacketID); err != nil {
+		return err
+	}
+	if err = packPacketProperties(w, u.Properties, header.version); err != nil {
+		return err
+	}
+	if len(u.ReasonCodes) <= 0 {
+		return nil
+	}
+	if header.version < ProtocolVersion5 {
+		return ErrUnsupportedPropSetup
+	}
+	rc := unsafe.Slice((*byte)(unsafe.SliceData(u.ReasonCodes)), uint32(len(u.ReasonCodes)))
+	return unsafeWriteBytes(w, &rc)
 }
 
 func (u *Unsuback) Unpack(r io.Reader, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	var err error
+	rr := &io.LimitedReader{R: r, N: int64(header.RemainLength)}
+	if err = unsafeReadUint16(rr, &u.PacketID); err != nil {
+		return err
+	}
+	if header.version < ProtocolVersion5 {
+		if rr.N != 0 {
+			return ErrUnsupportedPropSetup
+		}
+		return nil
+	}
+	props := &UnsubackProperties{}
+	if err = props.Unpack(rr); err != nil {
+		return err
+	}
+	u.Properties = props
+	if rr.N <= 0 {
+		return nil
+	}
+
+	u.ReasonCodes = make([]ReasonCode, rr.N)
+	p := unsafe.Slice((*byte)(unsafe.SliceData(u.ReasonCodes)), rr.N)
+	if _, err = rr.Read(p); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (u *Unsuback) Type() PacketType {
@@ -38,6 +81,5 @@ func (u *Unsuback) Type() PacketType {
 }
 
 func (u *Unsuback) ID() PacketID {
-	//TODO implement me
-	panic("implement me")
+	return u.PacketID
 }

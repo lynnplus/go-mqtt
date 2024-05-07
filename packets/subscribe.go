@@ -21,9 +21,6 @@ import (
 	"io"
 )
 
-// PacketID is the type of packet identifier
-type PacketID = uint16
-
 type Subscription struct {
 	Topic             string
 	QoS               byte

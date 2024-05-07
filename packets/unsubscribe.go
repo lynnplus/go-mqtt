@@ -17,6 +17,7 @@
 package packets
 
 import (
+	"bytes"
 	"io"
 )
 
@@ -77,14 +78,28 @@ func (u *Unsubscribe) ID() PacketID {
 }
 
 type UnSubProperties struct {
+	// User-defined properties, which is a string key-value pair
+	UserProps UserProperties
 }
 
-func (u *UnSubProperties) Pack(w io.Writer) error {
-	//TODO implement me
-	panic("implement me")
+func (s *UnSubProperties) Unpack(r io.Reader) error {
+	ps, err := ReadPacketProperties(r, UNSUBSCRIBE)
+	if err != nil {
+		return err
+	}
+	up, ok := ps[PropUserProperty]
+	if ok {
+		s.UserProps = up.(UserProperties)
+	}
+	return err
 }
 
-func (u *UnSubProperties) Unpack(r io.Reader) error {
-	//TODO implement me
-	panic("implement me")
+func (s *UnSubProperties) Pack(w io.Writer) error {
+	buf := bytes.NewBuffer([]byte{})
+	var err error
+	writeUserPropsData(w, s.UserProps, &err)
+	if err != nil {
+		return err
+	}
+	return writePropertiesData(w, buf.Bytes())
 }

@@ -86,6 +86,9 @@ const (
 	AUTH
 )
 
+// PacketID is the type of packet identifier
+type PacketID = uint16
+
 type Packet interface {
 	// Pack encodes the packet struct into bytes and writes it into io.Writer.
 	Pack(w io.Writer, header *FixedHeader) error
@@ -166,13 +169,20 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 		pkt = &Connack{}
 	case PUBLISH:
 	case PUBACK:
+		pkt = &Puback{}
 	case PUBREC:
+		pkt = &Pubrec{}
 	case PUBREL:
+		pkt = &Pubrel{}
 	case PUBCOMP:
+		pkt = &Pubcomp{}
 	case SUBSCRIBE:
+		pkt = &Subscribe{}
 	case SUBACK:
 	case UNSUBSCRIBE:
+		pkt = &Unsubscribe{}
 	case UNSUBACK:
+		pkt = &Unsuback{}
 	case PINGREQ:
 		pkt = &Pingreq{}
 	case PINGRESP:

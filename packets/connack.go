@@ -16,7 +16,6 @@
 
 package packets
 
-import "C"
 import (
 	"bytes"
 	"io"

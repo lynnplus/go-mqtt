@@ -30,7 +30,10 @@ type Packable interface {
 
 func packPacketProperties(w io.Writer, props Packable, version ProtocolVersion) error {
 	if version < ProtocolVersion5 {
-		return ErrUnsupportedPropSetup
+		if props != nil {
+			return ErrUnsupportedPropSetup
+		}
+		return nil
 	}
 	if props == nil {
 		_, err := w.Write([]byte{0})

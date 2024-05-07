@@ -20,17 +20,14 @@ import (
 	"io"
 )
 
-type Pingreq struct {
-}
+type Pingreq struct{}
 
 func (p *Pingreq) Pack(w io.Writer, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (p *Pingreq) Unpack(r io.Reader, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (p *Pingreq) Type() PacketType {
@@ -45,13 +42,11 @@ type Pingresp struct {
 }
 
 func (p *Pingresp) Pack(w io.Writer, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (p *Pingresp) Unpack(r io.Reader, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (p *Pingresp) Type() PacketType {

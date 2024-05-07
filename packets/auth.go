@@ -95,7 +95,7 @@ func (a *AuthProperties) Pack(w io.Writer) error {
 		writePropIdAndValue(buf, PropAuthMethod, &a.AuthMethod, &err)
 		writePropIdAndValue(buf, PropAuthData, &a.AuthData, &err)
 	}
-	writeUserPropsData(w, a.UserProps, &err)
+	writeUserPropsData(buf, a.UserProps, &err)
 	if err != nil {
 		return err
 	}

@@ -131,7 +131,7 @@ func (p *CommonProperties) Pack(w io.Writer) error {
 	if p.ReasonString != "" {
 		writePropIdAndValue(buf, PropReasonString, &p.ReasonString, &err)
 	}
-	writeUserPropsData(w, p.UserProps, &err)
+	writeUserPropsData(buf, p.UserProps, &err)
 	if err != nil {
 		return err
 	}

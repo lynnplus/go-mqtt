@@ -300,7 +300,7 @@ func (c *ConnProperties) Pack(w io.Writer) error {
 		writePropIdAndValue(buf, PropAuthMethod, &c.AuthMethod, &err)
 		writePropIdAndValue(buf, PropAuthData, &c.AuthData, &err)
 	}
-	writeUserPropsData(w, c.UserProps, &err)
+	writeUserPropsData(buf, c.UserProps, &err)
 	if err != nil {
 		return err
 	}

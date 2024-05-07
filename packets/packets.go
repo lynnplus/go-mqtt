@@ -168,6 +168,7 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 	case CONNACK:
 		pkt = &Connack{}
 	case PUBLISH:
+		pkt = &Publish{}
 	case PUBACK:
 		pkt = &Puback{}
 	case PUBREC:
@@ -192,8 +193,9 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 		pkt = &Disconnect{}
 	case AUTH:
 		pkt = &Auth{}
+	default:
+		return nil, NewReasonCodeError(ProtocolError, fmt.Sprintf("unknown packet type %d", header.PacketType))
 	}
-
 	if err := pkt.Unpack(r, header); err != nil {
 		return nil, err
 	}

@@ -141,8 +141,12 @@ func (s *SubProperties) Pack(w io.Writer) error {
 	buf := bytes.NewBuffer([]byte{})
 	var err error
 
+	if s.SubscriptionID != nil && *s.SubscriptionID == 0 {
+		return newInvalidPropValueError(PropSubscriptionID, 0)
+	}
+
 	writePropIdAndValue(buf, PropSubscriptionID, s.SubscriptionID, &err)
-	writeUserPropsData(w, s.UserProps, &err)
+	writeUserPropsData(buf, s.UserProps, &err)
 	if err != nil {
 		return err
 	}

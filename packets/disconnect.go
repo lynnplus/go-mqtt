@@ -95,7 +95,7 @@ func (d *DisConnProperties) Pack(w io.Writer) error {
 	if d.ReasonString != "" {
 		writePropIdAndValue(buf, PropReasonString, &d.ReasonString, &err)
 	}
-	writeUserPropsData(w, d.UserProps, &err)
+	writeUserPropsData(buf, d.UserProps, &err)
 	if err != nil {
 		return err
 	}

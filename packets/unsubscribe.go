@@ -97,7 +97,7 @@ func (s *UnSubProperties) Unpack(r io.Reader) error {
 func (s *UnSubProperties) Pack(w io.Writer) error {
 	buf := bytes.NewBuffer([]byte{})
 	var err error
-	writeUserPropsData(w, s.UserProps, &err)
+	writeUserPropsData(buf, s.UserProps, &err)
 	if err != nil {
 		return err
 	}

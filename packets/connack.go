@@ -112,6 +112,10 @@ func (c *ConnackProperties) Pack(w io.Writer) error {
 	buf := bytes.NewBuffer([]byte{})
 	var err error
 
+	if c.MaximumQoS != nil && *c.MaximumQoS > 1 {
+		return newInvalidPropValueError(PropMaximumQOS, *c.MaximumQoS)
+	}
+
 	if c.SessionExpiryInterval > 0 {
 		writePropIdAndValue(buf, PropSessionExpiryInterval, &c.SessionExpiryInterval, &err)
 	}
@@ -146,7 +150,7 @@ func (c *ConnackProperties) Pack(w io.Writer) error {
 		writePropIdAndValue(buf, PropAuthMethod, &c.AuthMethod, &err)
 		writePropIdAndValue(buf, PropAuthData, &c.AuthData, &err)
 	}
-	writeUserPropsData(w, c.UserProps, &err)
+	writeUserPropsData(buf, c.UserProps, &err)
 	if err != nil {
 		return err
 	}

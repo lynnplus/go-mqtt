@@ -179,6 +179,7 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 	case SUBSCRIBE:
 		pkt = &Subscribe{}
 	case SUBACK:
+		pkt = &Suback{}
 	case UNSUBSCRIBE:
 		pkt = &Unsubscribe{}
 	case UNSUBACK:
@@ -188,7 +189,9 @@ func Read(r io.Reader, version ProtocolVersion) (Packet, error) {
 	case PINGRESP:
 		pkt = &Pingresp{}
 	case DISCONNECT:
+		pkt = &Disconnect{}
 	case AUTH:
+		pkt = &Auth{}
 	}
 
 	if err := pkt.Unpack(r, header); err != nil {

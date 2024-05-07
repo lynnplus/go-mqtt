@@ -18,26 +18,82 @@ package packets
 
 import (
 	"io"
+	"unsafe"
 )
 
+type CommonSuback struct {
+	PacketID PacketID
+
+	//v3 unsuback没有原因码表
+	ReasonCodes []ReasonCode
+	Properties  *CommonProperties
+}
+
+func (u *CommonSuback) ID() PacketID {
+	return u.PacketID
+}
+
+func (u *CommonSuback) Pack(w io.Writer, header *FixedHeader) error {
+	var err error
+	if err = unsafeWriteUint16(w, &u.PacketID); err != nil {
+		return err
+	}
+	if err = packPacketProperties(w, u.Properties, header.version); err != nil {
+		return err
+	}
+	if len(u.ReasonCodes) <= 0 {
+		return nil
+	}
+	//The mqtt-v3 of SUBACK supports reason code tables, but UNSUBACK does not support it.
+	if header.version < ProtocolVersion5 {
+		if header.PacketType != SUBACK {
+			return ErrUnsupportedPropSetup
+		}
+	}
+	rc := unsafe.Slice((*byte)(unsafe.SliceData(u.ReasonCodes)), uint32(len(u.ReasonCodes)))
+	return unsafeWriteBytes(w, &rc)
+}
+
+func (u *CommonSuback) Unpack(r io.Reader, header *FixedHeader) error {
+	var err error
+	rr := &io.LimitedReader{R: r, N: int64(header.RemainLength)}
+	if err = unsafeReadUint16(rr, &u.PacketID); err != nil {
+		return err
+	}
+	if header.version < ProtocolVersion5 {
+		if rr.N != 0 {
+			return ErrUnsupportedPropSetup
+		}
+		return nil
+	}
+	props := &CommonProperties{}
+	if err = props.Unpack(rr); err != nil {
+		return err
+	}
+	u.Properties = props
+	if rr.N <= 0 {
+		return nil
+	}
+	u.ReasonCodes = make([]ReasonCode, rr.N)
+	p := unsafe.Slice((*byte)(unsafe.SliceData(u.ReasonCodes)), rr.N)
+	if _, err = rr.Read(p); err != nil {
+		return err
+	}
+	return nil
+}
+
 type Suback struct {
-}
-
-func (s *Suback) Pack(w io.Writer, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (s *Suback) Unpack(r io.Reader, header *FixedHeader) error {
-	//TODO implement me
-	panic("implement me")
+	CommonSuback
 }
 
 func (s *Suback) Type() PacketType {
 	return SUBACK
 }
 
-func (s *Suback) ID() PacketID {
-	//TODO implement me
-	panic("implement me")
+type Unsuback struct {
+	CommonSuback
+}
+
+func (u *Unsuback) Type() PacketType {
+	return UNSUBACK
 }

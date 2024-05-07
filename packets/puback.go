@@ -17,13 +17,14 @@
 package packets
 
 import (
+	"bytes"
 	"io"
 )
 
 type PubComm struct {
 	PacketID   PacketID
 	ReasonCode ReasonCode
-	Properties *PubCommProperties
+	Properties *CommonProperties
 }
 
 func (p *PubComm) ID() PacketID {
@@ -52,10 +53,7 @@ func (p *PubComm) Pack(w io.Writer, header *FixedHeader) error {
 	if p.Properties == nil {
 		return nil
 	}
-	if err = packPacketProperties(w, p.Properties, header.version); err != nil {
-		return err
-	}
-	return nil
+	return packPacketProperties(w, p.Properties, header.version)
 }
 
 func (p *PubComm) Unpack(r io.Reader, header *FixedHeader) error {
@@ -75,7 +73,7 @@ func (p *PubComm) Unpack(r io.Reader, header *FixedHeader) error {
 	if header.RemainLength < 4 {
 		return nil
 	}
-	props := &PubCommProperties{}
+	props := &CommonProperties{}
 	if err = props.Unpack(r); err != nil {
 		return err
 	}
@@ -120,18 +118,38 @@ func (p *Pubrel) Pack(w io.Writer, header *FixedHeader) error {
 	return p.PubComm.Pack(w, header)
 }
 
-type PubCommProperties struct {
+type CommonProperties struct {
 	ReasonString string
 	// User-defined properties, which is a string key-value pair
 	UserProps UserProperties
 }
 
-func (p *PubCommProperties) Pack(w io.Writer) error {
-	//TODO implement me
-	panic("implement me")
+func (p *CommonProperties) Pack(w io.Writer) error {
+	buf := bytes.NewBuffer([]byte{})
+	var err error
+
+	if p.ReasonString != "" {
+		writePropIdAndValue(buf, PropReasonString, &p.ReasonString, &err)
+	}
+	writeUserPropsData(w, p.UserProps, &err)
+	if err != nil {
+		return err
+	}
+	return writePropertiesData(w, buf.Bytes())
 }
 
-func (p *PubCommProperties) Unpack(r io.Reader) error {
-	//TODO implement me
-	panic("implement me")
+func (p *CommonProperties) Unpack(r io.Reader) error {
+	ps, err := ReadPacketProperties(r, PUBACK)
+	if err != nil {
+		return err
+	}
+	sid, ok := ps[PropReasonString]
+	if ok {
+		safeCopyPropValue(sid, &p.ReasonString, &err)
+	}
+	up, ok := ps[PropUserProperty]
+	if ok {
+		p.UserProps = up.(UserProperties)
+	}
+	return err
 }

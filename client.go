@@ -16,10 +16,12 @@
 
 package mqtt
 
-import "context"
+import (
+	"context"
+)
 
 type ClientListener struct {
-	OnServerConnected    func(client Client, reconn bool)
+	OnServerConnected    func(client Client, reconnection bool)
 	OnServerDisconnected func(client Client, err error)
 	OnServerConnFailed   func(client Client, err error)
 }
@@ -43,6 +45,15 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 func (c *Client) StartConnect(urls []string) error {
+
+	//r := bytes.NewBuffer([]byte{})
+	//
+	//if c.ProtocolVersion >= ProtocolVersion311 && c.ProtocolName != ProtocolMQTT {
+	//	return NewReasonCodeError(UnsupportedProtocolVersion, fmt.Sprintf("protocol version %d mismatch name %s", c.ProtocolVersion, ProtocolMQTT))
+	//}
+	//if c.ProtocolVersion == ProtocolVersion31 || c.ProtocolVersion > ProtocolVersion5 {
+	//	return NewReasonCodeError(UnsupportedProtocolVersion, "")
+	//}
 
 	return nil
 }

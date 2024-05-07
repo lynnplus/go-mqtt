@@ -205,6 +205,7 @@ var (
 	ErrUnsupportedValueOnVersion = NewReasonCodeError(ProtocolError, "Packet content field not supported by current version")
 	ErrUnsupportedPropSetup      = NewReasonCodeError(ProtocolError, "The current version does not support packet properties")
 	ErrInvalidPktFlags           = NewReasonCodeError(MalformedPacket, "Invalid packet control flags")
+	ErrWriteStringLimit          = NewReasonCodeError(MalformedPacket, "The length of written string data exceeds the limit of 65535")
 )
 
 // NewReasonCodeError returns a new error based on the reason code,

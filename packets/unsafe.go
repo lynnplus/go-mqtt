@@ -19,6 +19,7 @@ package packets
 import (
 	"fmt"
 	"io"
+	"math"
 	"unsafe"
 )
 
@@ -105,7 +106,11 @@ func unsafeReadUint32(r io.Reader, v *uint32) error {
 }
 
 func unsafeWriteString(w io.Writer, v *string) error {
-	n := uint16(len(*v))
+	size := len(*v)
+	if size > math.MaxUint16 {
+		return ErrWriteStringLimit
+	}
+	n := uint16(size)
 	if err := unsafeWriteUint16(w, &n); err != nil {
 		return err
 	}

@@ -33,7 +33,7 @@ func (u *Unsubscribe) Pack(w io.Writer, header *FixedHeader) error {
 	if err = unsafeWriteUint16(w, &u.PacketID); err != nil {
 		return err
 	}
-	if err = packPacketProperties(w, u.Properties, header.version); err != nil {
+	if err = u.packProperties(w, header.version); err != nil {
 		return err
 	}
 	for _, topic := range u.Topics {
@@ -67,6 +67,14 @@ func (u *Unsubscribe) Unpack(r io.Reader, header *FixedHeader) error {
 		u.Topics = append(u.Topics, topic)
 	}
 	return err
+}
+
+func (u *Unsubscribe) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if u.Properties != nil {
+		prop = u.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 func (u *Unsubscribe) Type() PacketType {

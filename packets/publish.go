@@ -52,7 +52,7 @@ func (p *Publish) Pack(w io.Writer, header *FixedHeader) error {
 			return err
 		}
 	}
-	if err = packPacketProperties(w, p.Properties, header.version); err != nil {
+	if err = p.packProperties(w, header.version); err != nil {
 		return err
 	}
 	if len(p.Payload) <= 0 {
@@ -89,6 +89,14 @@ func (p *Publish) Unpack(r io.Reader, header *FixedHeader) error {
 	p.Payload = make([]byte, rr.N)
 	_, err = rr.Read(p.Payload)
 	return err
+}
+
+func (p *Publish) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if p.Properties != nil {
+		prop = p.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 func (p *Publish) Type() PacketType {

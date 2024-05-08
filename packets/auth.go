@@ -43,7 +43,7 @@ func (a *Auth) Pack(w io.Writer, header *FixedHeader) error {
 	if a.Properties == nil {
 		return nil
 	}
-	return packPacketProperties(w, a.Properties, header.version)
+	return a.packProperties(w, header.version)
 }
 
 func (a *Auth) Unpack(r io.Reader, header *FixedHeader) error {
@@ -66,7 +66,14 @@ func (a *Auth) Unpack(r io.Reader, header *FixedHeader) error {
 	}
 	a.Properties = props
 	return nil
+}
 
+func (a *Auth) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if a.Properties != nil {
+		prop = a.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 func (a *Auth) Type() PacketType {

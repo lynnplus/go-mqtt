@@ -310,7 +310,7 @@ func readAllProperties(r io.Reader, validate func(PropertyID) error) (map[Proper
 		case PropPayloadFormat, PropRequestProblemInfo, PropRequestResponseInfo, PropRetainAvailable, PropWildcardSubAvailable, PropSubIDAvailable, PropSharedSubAvailable:
 			var v bool
 			b := (*byte)(unsafe.Pointer(&v))
-			unsafeReadWrap(r, &b, &err)
+			unsafeReadWrap(r, b, &err)
 			if err != nil {
 				return nil, err
 			}

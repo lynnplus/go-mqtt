@@ -23,6 +23,11 @@ import (
 
 type ProtocolVersion byte
 
+// IsValid reports whether the ProtocolVersion is a valid mqtt protocol version.
+func (p ProtocolVersion) IsValid() bool {
+	return p >= ProtocolVersion31 && p <= ProtocolVersion5
+}
+
 const (
 	ProtocolVersion31  ProtocolVersion = 3
 	ProtocolVersion311 ProtocolVersion = 4 // mqtt v3.1.1 protocol version
@@ -35,6 +40,16 @@ const (
 	ProtocolMQIsdp ProtocolName = "MQIsdp"
 	ProtocolMQTT   ProtocolName = "MQTT"
 )
+
+// NewConnect take a clientId to create a Connect Packet based on mqtt5
+func NewConnect(clientId string) *Connect {
+	return &Connect{
+		ProtocolName:    ProtocolMQTT,
+		ProtocolVersion: ProtocolVersion5,
+		ClientID:        clientId,
+		CleanStart:      false,
+	}
+}
 
 // Connect is
 type Connect struct {
@@ -65,6 +80,14 @@ func (c *Connect) ID() PacketID {
 	return 0
 }
 
+func (c *Connect) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if c.Properties != nil {
+		prop = c.Properties
+	}
+	return packPacketProperties(w, prop, version)
+}
+
 func (c *Connect) Pack(w io.Writer, header *FixedHeader) error {
 	var err error
 	if err = unsafeWriteString(w, (*string)(&c.ProtocolName)); err != nil {
@@ -80,7 +103,8 @@ func (c *Connect) Pack(w io.Writer, header *FixedHeader) error {
 	if err = unsafeWriteUint16(w, &c.KeepAlive); err != nil {
 		return err
 	}
-	if err = packPacketProperties(w, c.Properties, header.version); err != nil {
+
+	if err = c.packProperties(w, header.version); err != nil {
 		return err
 	}
 	if err = unsafeWriteString(w, &c.ClientID); err != nil {
@@ -88,7 +112,11 @@ func (c *Connect) Pack(w io.Writer, header *FixedHeader) error {
 	}
 	if c.hasWillMsg() {
 		will := c.WillMessage
-		if err = packPacketProperties(w, will.Properties, header.version); err != nil {
+		var wp Packable
+		if will.Properties != nil {
+			wp = will.Properties
+		}
+		if err = packPacketProperties(w, wp, header.version); err != nil {
 			return err
 		}
 		if err := unsafeWriteString(w, &will.Topic); err != nil {

@@ -41,7 +41,7 @@ func (d *Disconnect) Pack(w io.Writer, header *FixedHeader) error {
 	if d.Properties == nil {
 		return nil
 	}
-	return packPacketProperties(w, d.Properties, header.version)
+	return d.packProperties(w, header.version)
 }
 
 func (d *Disconnect) Unpack(r io.Reader, header *FixedHeader) error {
@@ -72,6 +72,14 @@ func (d *Disconnect) Type() PacketType {
 
 func (d *Disconnect) ID() PacketID {
 	return 0
+}
+
+func (d *Disconnect) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if d.Properties != nil {
+		prop = d.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 type DisConnProperties struct {

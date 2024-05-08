@@ -53,7 +53,7 @@ func (p *PubComm) Pack(w io.Writer, header *FixedHeader) error {
 	if p.Properties == nil {
 		return nil
 	}
-	return packPacketProperties(w, p.Properties, header.version)
+	return p.packProperties(w, header.version)
 }
 
 func (p *PubComm) Unpack(r io.Reader, header *FixedHeader) error {
@@ -79,6 +79,14 @@ func (p *PubComm) Unpack(r io.Reader, header *FixedHeader) error {
 	}
 	p.Properties = props
 	return nil
+}
+
+func (p *PubComm) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if p.Properties != nil {
+		prop = p.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 type Puback struct {

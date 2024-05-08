@@ -180,12 +180,12 @@ const (
 	WildcardSubscriptionsNotSupported   ReasonCode = 0xA2 // Wildcard Subscriptions not supported
 )
 
-type reasonCodeError struct {
+type ReasonCodeError struct {
 	code    ReasonCode
 	message string
 }
 
-func (r *reasonCodeError) Error() string {
+func (r *ReasonCodeError) Error() string {
 	if r.message != "" {
 		return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.code), r.message)
 	}
@@ -193,8 +193,8 @@ func (r *reasonCodeError) Error() string {
 	return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.code), r.code)
 }
 
-func (r *reasonCodeError) Is(target error) bool {
-	var x *reasonCodeError
+func (r *ReasonCodeError) Is(target error) bool {
+	var x *ReasonCodeError
 	if errors.As(target, &x) {
 		return x.code == r.code
 	}
@@ -216,5 +216,5 @@ func NewReasonCodeError(code ReasonCode, message string) error {
 	if !code.IsError() {
 		panic(fmt.Errorf("reason code 0x%x is not an error", byte(code)))
 	}
-	return &reasonCodeError{code, message}
+	return &ReasonCodeError{code, message}
 }

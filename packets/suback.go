@@ -38,7 +38,7 @@ func (u *CommonSuback) Pack(w io.Writer, header *FixedHeader) error {
 	if err = unsafeWriteUint16(w, &u.PacketID); err != nil {
 		return err
 	}
-	if err = packPacketProperties(w, u.Properties, header.version); err != nil {
+	if err = u.packProperties(w, header.version); err != nil {
 		return err
 	}
 	if len(u.ReasonCodes) <= 0 {
@@ -80,6 +80,14 @@ func (u *CommonSuback) Unpack(r io.Reader, header *FixedHeader) error {
 		return err
 	}
 	return nil
+}
+
+func (u *CommonSuback) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if u.Properties != nil {
+		prop = u.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 type Suback struct {

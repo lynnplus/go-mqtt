@@ -49,7 +49,7 @@ func (s *Subscribe) Pack(w io.Writer, header *FixedHeader) error {
 	if err = unsafeWriteUint16(w, &s.PacketID); err != nil {
 		return err
 	}
-	if err = packPacketProperties(w, s.Properties, header.version); err != nil {
+	if err = s.packProperties(w, header.version); err != nil {
 		return err
 	}
 
@@ -111,6 +111,14 @@ func (s *Subscribe) Unpack(r io.Reader, header *FixedHeader) error {
 		s.Subscriptions = append(s.Subscriptions, opt)
 	}
 	return err
+}
+
+func (s *Subscribe) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if s.Properties != nil {
+		prop = s.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 type SubProperties struct {

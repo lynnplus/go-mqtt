@@ -36,7 +36,7 @@ func (c *Connack) Pack(w io.Writer, header *FixedHeader) error {
 	if _, err = w.Write(b[:]); err != nil {
 		return err
 	}
-	if err = packPacketProperties(w, c.Properties, header.version); err != nil {
+	if err = c.packProperties(w, header.version); err != nil {
 		return err
 	}
 	return err
@@ -69,6 +69,14 @@ func (c *Connack) Type() PacketType {
 
 func (c *Connack) ID() PacketID {
 	return 0
+}
+
+func (c *Connack) packProperties(w io.Writer, version ProtocolVersion) error {
+	var prop Packable
+	if c.Properties != nil {
+		prop = c.Properties
+	}
+	return packPacketProperties(w, prop, version)
 }
 
 type ConnackProperties struct {

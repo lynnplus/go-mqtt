@@ -35,12 +35,24 @@ type Subscribe struct {
 	Properties    *SubProperties
 }
 
+func NewSubscribe(topics ...string) *Subscribe {
+	subs := make([]Subscription, len(topics))
+	for i, topic := range topics {
+		subs[i] = Subscription{Topic: topic, QoS: 0}
+	}
+	return &Subscribe{Subscriptions: subs}
+}
+
 func (s *Subscribe) Type() PacketType {
 	return SUBSCRIBE
 }
 
 func (s *Subscribe) ID() PacketID {
 	return s.PacketID
+}
+
+func (s *Subscribe) SetID(id PacketID) {
+	s.PacketID = id
 }
 
 func (s *Subscribe) Pack(w io.Writer, header *FixedHeader) error {

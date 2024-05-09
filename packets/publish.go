@@ -34,6 +34,23 @@ type Publish struct {
 	Properties *PubProperties
 }
 
+func NewPublish(topic string, payload []byte) *Publish {
+	return NewPublishWith(topic, payload, 0, false)
+}
+
+func NewRetainPublish(topic string, payload []byte) *Publish {
+	return NewPublishWith(topic, payload, 0, true)
+}
+
+func NewPublishWith(topic string, payload []byte, qos byte, retain bool) *Publish {
+	return &Publish{
+		Topic:   topic,
+		QoS:     qos,
+		Retain:  retain,
+		Payload: payload,
+	}
+}
+
 func (p *Publish) Pack(w io.Writer, header *FixedHeader) error {
 	f := p.QoS << 1
 	if p.Duplicate {
@@ -107,6 +124,10 @@ func (p *Publish) ID() PacketID {
 	return p.PacketID
 }
 
+func (p *Publish) SetID(id PacketID) {
+	p.PacketID = id
+}
+
 type PubProperties struct {
 	//Indicates whether the payload is UTF-8 encoded character data
 	PayloadFormatIndicator bool
@@ -118,7 +139,11 @@ type PubProperties struct {
 	//Represents the subscription identifier. The value can be 1 to 268,435,455.
 	// If the value is 0, it is a protocol error.
 	SubscriptionID *int
-	UserProps      UserProperties
+	User           UserProperties
+}
+
+func NewPubProperties() *PubProperties {
+	return &PubProperties{User: map[string][]string{}}
 }
 
 func (p *PubProperties) Pack(w io.Writer) error {
@@ -146,7 +171,7 @@ func (p *PubProperties) Pack(w io.Writer) error {
 		writePropIdAndValue(buf, PropContentType, &p.ContentType, &err)
 	}
 	writePropIdAndValue(buf, PropSubscriptionID, p.SubscriptionID, &err)
-	writeUserPropsData(buf, p.UserProps, &err)
+	writeUserPropsData(buf, p.User, &err)
 	if err != nil {
 		return err
 	}
@@ -181,7 +206,7 @@ func (p *PubProperties) Unpack(r io.Reader) error {
 	}
 	up, ok := ps[PropUserProperty]
 	if ok {
-		p.UserProps = up.(UserProperties)
+		p.User = up.(UserProperties)
 	}
 	return err
 }

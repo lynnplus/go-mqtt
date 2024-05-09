@@ -42,12 +42,15 @@ const (
 )
 
 // NewConnect take a clientId to create a Connect Packet based on mqtt5
-func NewConnect(clientId string) *Connect {
+func NewConnect(clientId, username string, password []byte) *Connect {
 	return &Connect{
 		ProtocolName:    ProtocolMQTT,
 		ProtocolVersion: ProtocolVersion5,
 		ClientID:        clientId,
+		Username:        username,
+		Password:        password,
 		CleanStart:      false,
+		KeepAlive:       60,
 	}
 }
 

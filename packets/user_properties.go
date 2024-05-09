@@ -16,7 +16,9 @@
 
 package packets
 
-import "io"
+import (
+	"io"
+)
 
 // A UserProperties represents the key-value pairs in a user properties for Packet.
 type UserProperties map[string][]string
@@ -35,12 +37,18 @@ func (u *UserProperties) Get(key string) string {
 // Add adds a key,value pair to UserProperties, appending it to any existing values associated with the key.
 // The key is case-sensitive.
 func (u *UserProperties) Add(key, value string) *UserProperties {
+	if *u == nil {
+		*u = make(UserProperties)
+	}
 	(*u)[key] = append((*u)[key], value)
 	return u
 }
 
 // AddSlice adds key,values to UserProperties
 func (u *UserProperties) AddSlice(key string, value ...string) *UserProperties {
+	if *u == nil {
+		*u = make(UserProperties)
+	}
 	(*u)[key] = append((*u)[key], value...)
 	return u
 }

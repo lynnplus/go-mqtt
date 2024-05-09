@@ -24,6 +24,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type packetInfo struct {
@@ -39,6 +40,28 @@ type Conn struct {
 	wg      sync.WaitGroup
 	client  *Client
 	closed  atomic.Bool
+}
+
+func connect(conn *Conn, pkt *packets.Connect) (*packets.Connack, error) {
+	var err error
+	_ = conn.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err = conn.writePacket(pkt); err != nil {
+		return nil, err
+	}
+	if err = conn.flushWrite(); err != nil {
+		return nil, err
+	}
+
+	var packet packets.Packet
+	packet, err = conn.readPacket()
+	if err != nil {
+		return nil, err
+	}
+	ack, ok := packet.(*packets.Connack)
+	if !ok {
+		return nil, fmt.Errorf("packet is not Connack")
+	}
+	return ack, nil
 }
 
 func attemptConnection(ctx context.Context, dialer Dialer, size int, client *Client) (*Conn, error) {
@@ -78,12 +101,14 @@ func (conn *Conn) loopRead(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Println("loop read stop done")
 			conn.loopEnd(nil)
 			return
 		default:
 		}
 		pkt, err := conn.readPacket()
 		if err != nil {
+			fmt.Println("loop read stop:", err)
 			conn.loopEnd(err)
 			return
 		}
@@ -97,6 +122,7 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Println("loop write stop")
 			conn.loopEnd(nil)
 			return
 		case info, ok := <-output:
@@ -123,22 +149,23 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 }
 
 func (conn *Conn) loopEnd(err error) {
-	fmt.Println(err)
+	fmt.Println("loop end", err)
 	if conn.closed.Load() {
 		return
 	}
 	if conn.client != nil {
+		fmt.Println("---")
 		go conn.client.occurredError(err)
 	}
 }
 
 func (conn *Conn) close() error {
+	fmt.Println("start close connection")
 	if !conn.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	err := conn.conn.Close()
 	conn.wg.Wait()
-
 	conn.client = nil
 	conn.conn = nil
 	return err

@@ -85,6 +85,10 @@ func (u *Unsubscribe) ID() PacketID {
 	return u.PacketID
 }
 
+func (u *Unsubscribe) SetID(id PacketID) {
+	u.PacketID = id
+}
+
 type UnSubProperties struct {
 	// User-defined properties, which is a string key-value pair
 	UserProps UserProperties

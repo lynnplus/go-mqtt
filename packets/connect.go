@@ -210,6 +210,18 @@ func (c *Connect) Unpack(r io.Reader, header *FixedHeader) error {
 	return nil
 }
 
+// Clone returns a deep copy of Connect
+func (c *Connect) Clone() *Connect {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	if c.Properties != nil {
+		cp.Properties = cp.Properties.Clone()
+	}
+	return &cp
+}
+
 func (c *Connect) hasWillMsg() bool {
 	return c.WillMessage != nil && c.WillMessage.Topic != ""
 }
@@ -338,6 +350,22 @@ func (c *ConnProperties) Pack(w io.Writer) error {
 	return writePropertiesData(w, buf.Bytes())
 }
 
+// Clone returns a deep copy of ConnProperties
+func (c *ConnProperties) Clone() *ConnProperties {
+	cp := *c
+	if c.MaximumPacketSize != nil {
+		v := *c.MaximumPacketSize
+		cp.MaximumPacketSize = &v
+	}
+	if c.RequestProblemInfo != nil {
+		v := *c.RequestProblemInfo
+		cp.RequestProblemInfo = &v
+	}
+	cp.UserProps = *c.UserProps.Copy()
+	cp.AuthData = bytes.Clone(c.AuthData)
+	return &cp
+}
+
 type WillProperties struct {
 	// Will delay interval (in seconds), defaults to 0 when the property does not exist
 	WillDelayInterval uint32
@@ -407,4 +435,16 @@ func (w *WillProperties) Pack(wr io.Writer) error {
 		return err
 	}
 	return writePropertiesData(wr, buf.Bytes())
+}
+
+// Clone returns a deep copy of WillProperties
+func (w *WillProperties) Clone() *WillProperties {
+	cp := *w
+	if w.MessageExpiryInterval != nil {
+		v := *w.MessageExpiryInterval
+		cp.MessageExpiryInterval = &v
+	}
+	cp.UserProps = *w.UserProps.Copy()
+	cp.CorrelationData = bytes.Clone(w.CorrelationData)
+	return &cp
 }

@@ -59,3 +59,7 @@ func (x *ConnState) Store(val ConnStatus) { atomic.StoreInt32((*int32)(&x.v), in
 func (x *ConnState) CompareAndSwap(old, new ConnStatus) (swapped bool) {
 	return atomic.CompareAndSwapInt32((*int32)(&x.v), int32(old), int32(new))
 }
+
+func (x *ConnState) IsConnected() bool {
+	return x.Load() == StatusConnected
+}

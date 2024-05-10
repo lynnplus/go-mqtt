@@ -16,8 +16,11 @@
 
 package mqtt
 
-import "github.com/lynnplus/go-mqtt/packets"
+import (
+	"github.com/lynnplus/go-mqtt/packets"
+)
 
+// ServerProperties is a struct that holds server properties
 type ServerProperties struct {
 	MaximumPacketSize    uint32
 	ReceiveMaximum       uint16
@@ -33,8 +36,8 @@ func NewServerProperties() *ServerProperties {
 	return &ServerProperties{
 		ReceiveMaximum:       65535,
 		MaximumQoS:           2,
-		MaximumPacketSize:    0,
-		TopicAliasMaximum:    0,
+		MaximumPacketSize:    0, //0:unlimited
+		TopicAliasMaximum:    0, //0:unlimited
 		RetainAvailable:      true,
 		WildcardSubAvailable: true,
 		SubIDAvailable:       true,
@@ -43,5 +46,27 @@ func NewServerProperties() *ServerProperties {
 }
 
 func (s *ServerProperties) ReconfigureFromResponse(resp *packets.Connack) {
-	//TODO impl
+	if resp.Properties != nil {
+		prop := resp.Properties
+		s.ReceiveMaximum = prop.ReceiveMaximum
+		s.TopicAliasMaximum = prop.TopicAliasMaximum
+		if prop.MaximumQoS != nil {
+			s.MaximumQoS = *prop.MaximumQoS
+		}
+		if prop.RetainAvailable != nil {
+			s.RetainAvailable = *prop.RetainAvailable
+		}
+		if prop.MaximumPacketSize != nil {
+			s.MaximumPacketSize = *prop.MaximumPacketSize
+		}
+		if prop.WildcardSubAvailable != nil {
+			s.WildcardSubAvailable = *prop.WildcardSubAvailable
+		}
+		if prop.SharedSubAvailable != nil {
+			s.SharedSubAvailable = *prop.SharedSubAvailable
+		}
+		if prop.SubIdAvailable != nil {
+			s.SubIDAvailable = *prop.SubIdAvailable
+		}
+	}
 }

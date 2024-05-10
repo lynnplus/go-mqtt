@@ -17,27 +17,56 @@
 package mqtt
 
 import (
-	"net"
+	"errors"
+	"github.com/lynnplus/go-mqtt/packets"
 	"sync/atomic"
 )
 
 type Context interface {
+	Topic() string
+	PacketID() packets.PacketID
+	SubscriptionID() int
 }
 
-type mqttContext struct {
-	conn   net.Conn
+type pubMsgContext struct {
 	isCopy atomic.Bool
+
+	client *Client
+	packet *packets.Publish
 }
 
-func (c *mqttContext) reset() {
-
+func (c *pubMsgContext) SubscriptionID() int {
+	if c.packet.Properties == nil || c.packet.Properties.SubscriptionID == nil {
+		return 0
+	}
+	return *c.packet.Properties.SubscriptionID
 }
 
-func (c *mqttContext) MarshalPlay(v any) {
-
+func (c *pubMsgContext) Topic() string {
+	return c.packet.Topic
 }
 
-func (c *mqttContext) Clone() Context {
+func (c *pubMsgContext) PacketID() packets.PacketID {
+	return c.packet.ID()
+}
+
+func (c *pubMsgContext) RawPacket() *packets.Publish {
+	//TODO copy from raw
+	return c.packet
+}
+
+func (c *pubMsgContext) UnmarshalPayload(v any) error {
+	if c.packet.Properties == nil || c.packet.Properties.ContentType == "" {
+		return errors.New("mqtt.context: invalid packet")
+	}
+	return UnmarshalPayload(c.packet.Properties.ContentType, c.packet.Payload, v)
+}
+
+func (c *pubMsgContext) Clone() Context {
 	//TODO clone raw ctx , set isCopy to true
-	return &mqttContext{}
+	return &pubMsgContext{}
+}
+
+func (c *pubMsgContext) reset() {
+
 }

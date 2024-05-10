@@ -27,6 +27,10 @@ type Unsubscribe struct {
 	Properties *UnSubProperties
 }
 
+func NewUnsubscribe(topics ...string) *Unsubscribe {
+	return &Unsubscribe{Topics: topics}
+}
+
 func (u *Unsubscribe) Pack(w io.Writer, header *FixedHeader) error {
 	var err error
 	header.Flags = 2

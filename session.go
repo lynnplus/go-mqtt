@@ -18,6 +18,7 @@ package mqtt
 
 import (
 	"errors"
+	"fmt"
 	"github.com/lynnplus/go-mqtt/packets"
 	"github.com/lynnplus/gotypes"
 	"math"
@@ -27,7 +28,12 @@ import (
 type SessionState interface {
 	ConnectionCompleted(conn *packets.Connect, ack *packets.Connack) error
 	ConnectionLost(dp *packets.Disconnect) error
+
+	// SubmitPacket submits a data packet to the session state and assigns an available id to the data packet
 	SubmitPacket(pkt IdentifiablePacket) (<-chan packets.Packet, error)
+	// RevokePacket revokes a submitted packet from the session state.
+	// It only supports the revocation of limited packet types.
+	RevokePacket(pkt packets.Packet) error
 	ResponsePacket(pkt packets.Packet) error
 }
 
@@ -51,11 +57,13 @@ type DefaultSession struct {
 	store         SessionStore
 	clientPackets gotypes.SafeMap[packets.PacketID, *RequestedPacket]
 	lastPid       atomic.Uint32
+	logger        Logger
 }
 
 func NewDefaultSession() *DefaultSession {
 	return &DefaultSession{
 		clientPackets: gotypes.NewRWMutexMap[packets.PacketID, *RequestedPacket](),
+		logger:        &EmptyLogger{},
 	}
 }
 
@@ -72,23 +80,38 @@ func (s *DefaultSession) SubmitPacket(pkt IdentifiablePacket) (<-chan packets.Pa
 	return req.Response, nil
 }
 
+func (s *DefaultSession) RevokePacket(pkt packets.Packet) error {
+	if pkt.ID() == 0 {
+		return errors.New("unable to revoke a Packet with packet identifier 0")
+	}
+	switch pkt.Type() {
+	case packets.SUBSCRIBE, packets.UNSUBSCRIBE:
+		if _, ok := s.clientPackets.LoadAndDelete(pkt.ID()); !ok {
+			return fmt.Errorf("revoke Packet(%v) failed, no data found", pkt.ID())
+		}
+		return nil
+	default:
+		return fmt.Errorf("Packet %s  do not support revoke operations", pkt.Type())
+	}
+}
+
 func (s *DefaultSession) ResponsePacket(pkt packets.Packet) error {
 	switch pkt.Type() {
 	case packets.PUBACK:
 	case packets.PUBREC:
 	case packets.PUBREL:
 	case packets.PUBCOMP:
-	case packets.SUBACK:
+	case packets.SUBACK, packets.UNSUBACK:
 		if v, ok := s.clientPackets.LoadAndDelete(pkt.ID()); ok {
 			if v.Response != nil {
 				v.Response <- pkt
 			}
 			v.Consumed = true
 		} else {
-			//TODO err handle
+			return fmt.Errorf("response processing data corresponding to the packet(%v %s) was not found", pkt.ID(), pkt.Type())
 		}
-	case packets.UNSUBACK:
-
+	default:
+		return fmt.Errorf("unknown packet：%v %s", pkt.ID(), pkt.Type())
 	}
 	return nil
 }

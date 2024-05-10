@@ -101,18 +101,16 @@ func (conn *Conn) loopRead(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("loop read stop done")
 			conn.loopEnd(nil)
 			return
 		default:
 		}
 		pkt, err := conn.readPacket()
 		if err != nil {
-			fmt.Println("loop read stop:", err)
 			conn.loopEnd(err)
 			return
 		}
-		conn.client.incoming(pkt)
+		conn.client.incoming(ctx, pkt)
 	}
 }
 
@@ -122,7 +120,6 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("loop write stop")
 			conn.loopEnd(nil)
 			return
 		case info, ok := <-output:

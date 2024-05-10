@@ -37,9 +37,13 @@ type ClientListener struct {
 }
 
 type ClientConfig struct {
-	Pinger Pinger
+	ManualACK bool
+	Logger    Logger
+	Pinger    Pinger
+	Router    Router
 	ClientListener
-	Session SessionState
+	Session       SessionState
+	PacketTimeout time.Duration
 }
 
 type Client struct {
@@ -52,10 +56,11 @@ type Client struct {
 	connState   ConnState
 	autoConnect bool
 
-	clientId      string
-	sendQueue     chan *packetInfo
-	ctxCancelFunc context.CancelFunc
-	workers       sync.WaitGroup
+	clientId          string
+	sendQueue         chan *packetInfo
+	ctxCancelFunc     context.CancelFunc
+	workers           sync.WaitGroup
+	publishHandleChan chan *packets.Publish
 }
 
 var (
@@ -68,6 +73,12 @@ func NewClient(dialer Dialer, config ClientConfig) *Client {
 	}
 	if config.Session == nil {
 		config.Session = NewDefaultSession()
+	}
+	if config.Logger == nil {
+		config.Logger = &EmptyLogger{}
+	}
+	if config.Router == nil {
+		config.Router = &DefaultRouter{}
 	}
 	return &Client{dialer: dialer, version: packets.ProtocolVersion5,
 		bufferSize: 4096,
@@ -94,19 +105,11 @@ func (c *Client) StartConnect(pkt *packets.Connect) error {
 }
 
 func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Connack, error) {
-	if !pkt.ProtocolVersion.IsValid() {
-		return nil, fmt.Errorf("protocol version is invalid")
+	if !pkt.ProtocolVersion.IsValid() || pkt.ProtocolName == "" {
+		return nil, fmt.Errorf("protocol version or name is invalid")
 	}
 	if !c.connState.CompareAndSwap(StatusNone, StatusConnecting) {
 		return nil, fmt.Errorf("connection already in %s", c.connState)
-	}
-	if pkt.ProtocolName == "" {
-		switch pkt.ProtocolVersion {
-		case packets.ProtocolVersion5, packets.ProtocolVersion311:
-			pkt.ProtocolName = packets.ProtocolMQTT
-		default:
-			pkt.ProtocolName = packets.ProtocolMQIsdp
-		}
 	}
 	conn, err := attemptConnection(ctx, c.dialer, c.bufferSize, c)
 	if err != nil {
@@ -132,8 +135,9 @@ func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Co
 	c.properties.ReconfigureFromResponse(connack)
 	callConnectComplete(c, connack)
 
-	fmt.Println(time.Now().Local())
+	c.publishHandleChan = make(chan *packets.Publish, c.properties.ReceiveMaximum)
 
+	//set io timeout to 0
 	_ = conn.conn.SetDeadline(time.Time{})
 
 	clientCtx, cancelFunc := context.WithCancel(context.Background())
@@ -145,12 +149,16 @@ func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Co
 	go func() {
 		defer c.workers.Done()
 		err := c.config.Pinger.Run(clientCtx, keepAlive, c)
-		fmt.Println("pinger exit")
+		c.config.Logger.Debug("client pinger exit,err(%v)", err)
 		if err != nil {
 			go c.occurredError(fmt.Errorf("pinger run error: %w", err))
 		}
 	}()
-
+	c.workers.Add(1)
+	go func() {
+		defer c.workers.Done()
+		c.handleReceivedPublish(clientCtx)
+	}()
 	return connack, nil
 }
 
@@ -170,25 +178,34 @@ func (c *Client) SendPing(ctx context.Context) error {
 	return c.awaitSendComplete(ctx, &packets.Pingreq{})
 }
 
-func (c *Client) Publish(ctx context.Context, pkt *packets.Publish) error {
+func (c *Client) verifyPublish(pkt *packets.Publish) error {
+	//TODO mqtt v3 impl
 	if pkt.QoS > c.properties.MaximumQoS {
 		return fmt.Errorf("%w: cannot send Publish with QoS %d, server maximum QoS is %d", ErrInvalidArguments, pkt.QoS, c.properties.MaximumQoS)
 	}
-	//if p.Properties != nil && p.Properties.TopicAlias != nil {
-	//	if c.serverProps.TopicAliasMaximum > 0 && *p.Properties.TopicAlias > c.serverProps.TopicAliasMaximum {
-	//		return nil, fmt.Errorf("%w: cannot send publish with TopicAlias %d, server topic alias maximum is %d", ErrInvalidArguments, *p.Properties.TopicAlias, c.serverProps.TopicAliasMaximum)
-	//	}
-	//}
-	//if !c.serverProps.RetainAvailable && p.Retain {
-	//	return nil, fmt.Errorf("%w: cannot send Publish with retain flag set, server does not support retained messages", ErrInvalidArguments)
-	//}
-	//if (p.Properties == nil || p.Properties.TopicAlias == nil) && p.Topic == "" {
-	//	return nil, fmt.Errorf("%w: cannot send a publish with no TopicAlias and no Topic set", ErrInvalidArguments)
-	//}
+	if pkt.QoS == 0 && pkt.Duplicate {
+		return fmt.Errorf("%w: cannot send Publish with qos 0 and Duplicate set to true", ErrInvalidArguments)
+	}
+	if pkt.Retain && !c.properties.RetainAvailable {
+		return fmt.Errorf("%w: cannot send Publish with Retain flag,server does not support retained messages", ErrInvalidArguments)
+	}
+	if pkt.Properties != nil {
+		if pkt.Topic == "" && pkt.Properties.TopicAlias == nil {
+			return fmt.Errorf("%w: cannot send Publish without topic and without topic alias set", ErrInvalidArguments)
+		}
+		if pkt.Properties.TopicAlias != nil && c.properties.TopicAliasMaximum < *(pkt.Properties.TopicAlias) {
+			return fmt.Errorf("%w: topic alias exceeds server limit,topic alias maximum is %v", ErrInvalidArguments, c.properties.TopicAliasMaximum)
+		}
+	}
+	return nil
+}
+
+// PublishNR is used to send a packet without ack response to the server, and its qos will be forced to 0
+func (c *Client) PublishNR(ctx context.Context, pkt *packets.Publish) error {
+	pkt.QoS = 0
 
 	err := c.awaitSendComplete(ctx, pkt)
 	if err != nil {
-		go c.occurredError(err)
 		return err
 	}
 	c.config.Pinger.Ping()
@@ -233,6 +250,28 @@ func (c *Client) Subscribe(ctx context.Context, pkt *packets.Subscribe) (*packet
 	return ack, nil
 }
 
+func (c *Client) Unsubscribe(ctx context.Context, pkt *packets.Unsubscribe) (*packets.Unsuback, error) {
+	resp, err := c.config.Session.SubmitPacket(pkt)
+	if err != nil {
+		return nil, err
+	}
+	if err = c.awaitSendComplete(ctx, pkt); err != nil {
+		return nil, err
+	}
+	c.config.Pinger.Ping()
+	var respPkt packets.Packet
+	select {
+	//TODO timeout ctx
+	case <-ctx.Done():
+	case respPkt = <-resp:
+		if respPkt.Type() != packets.UNSUBACK {
+			return nil, errors.New("invalid packet type received, expected UNSUBACK")
+		}
+	}
+	ack := respPkt.(*packets.Unsuback)
+	return ack, nil
+}
+
 // Disconnect is used to send Disconnect data packets to the MQTT server.
 // The data packets use reason code 0. Regardless of whether it is sent successfully or not,
 // the connection will be disconnected and no reconnection attempt will be made.
@@ -272,21 +311,31 @@ func (c *Client) sendPacketToQueue(pkt *packetInfo) error {
 	return nil
 }
 
-func (c *Client) incoming(pkt packets.Packet) {
-
-	fmt.Println("incoming packet", pkt.Type())
+func (c *Client) incoming(ctx context.Context, pkt packets.Packet) {
+	c.config.Logger.Debug("incoming packet %s %v", pkt.Type(), pkt.ID())
 	switch pkt.Type() {
 	case packets.PUBLISH:
+		pub := pkt.(*packets.Publish)
+		fmt.Printf("incoming packet %v %v %v \n", pkt.ID(), pub.QoS, pub.Topic)
+		if pub.QoS == 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case c.publishHandleChan <- pub:
+			}
+			return
+		}
+
+		c.config.Logger.Error("qos 1 or 2 is not implemented")
 	case packets.PUBACK:
 	case packets.PUBREC:
 	case packets.PUBREL:
 	case packets.PUBCOMP:
-	case packets.SUBACK:
+	case packets.SUBACK, packets.UNSUBACK:
 		err := c.config.Session.ResponsePacket(pkt)
 		if err != nil {
-			//TODO err handle
+			c.config.Logger.Error("incoming response error: %v", err)
 		}
-	case packets.UNSUBACK:
 	case packets.PINGRESP:
 		c.config.Pinger.Pong()
 	case packets.DISCONNECT:
@@ -298,13 +347,31 @@ func (c *Client) incoming(pkt packets.Packet) {
 	}
 }
 
+func (c *Client) handleReceivedPublish(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case pkt, ok := <-c.publishHandleChan:
+			if !ok {
+				return
+			}
+			msgCtx := &pubMsgContext{
+				client: c,
+				packet: pkt,
+			}
+			c.config.Router.Route(msgCtx)
+		}
+	}
+}
+
 func (c *Client) serverDisconnect(pkt *packets.Disconnect) {
-	fmt.Println("server disconnect", pkt.ReasonCode.String())
+	c.config.Logger.Debug("server initiates disconnection: %s", pkt.ReasonCode.String())
+	if pkt.Properties != nil && pkt.Properties.ReasonString != "" {
+		c.config.Logger.Debug("disconnection reason: %s", pkt.Properties.ReasonString)
+	}
 
 	c.shutdown()
-	if pkt.Properties != nil {
-		fmt.Println("props=", *pkt.Properties)
-	}
 }
 
 func (c *Client) shutdown() {
@@ -312,11 +379,11 @@ func (c *Client) shutdown() {
 }
 
 func (c *Client) occurredError(err error) {
-	fmt.Println(time.Now().Local())
+	c.config.Logger.Error("occurredError:%v", err)
 
 	c.ctxCancelFunc()
 
-	closeErr := c.conn.close()
-	fmt.Println("close err=", closeErr)
-	fmt.Println("occurredError", err)
+	if closeErr := c.conn.close(); closeErr != nil {
+		c.config.Logger.Debug("close conn err:%v", closeErr)
+	}
 }

@@ -26,6 +26,15 @@ type Disconnect struct {
 	Properties *DisConnProperties
 }
 
+func NewDisconnect(code ReasonCode, reason string) *Disconnect {
+	d := &Disconnect{ReasonCode: code}
+	if reason != "" {
+		d.Properties = &DisConnProperties{}
+		d.Properties.ReasonString = reason
+	}
+	return d
+}
+
 func (d *Disconnect) Pack(w io.Writer, header *FixedHeader) error {
 	if d.ReasonCode == Success && d.Properties == nil {
 		return nil

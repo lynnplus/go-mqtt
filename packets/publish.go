@@ -75,7 +75,8 @@ func (p *Publish) Pack(w io.Writer, header *FixedHeader) error {
 	if len(p.Payload) <= 0 {
 		return nil
 	}
-	return unsafeWriteBytes(w, &p.Payload)
+	_, err = w.Write(p.Payload)
+	return err
 }
 
 func (p *Publish) Unpack(r io.Reader, header *FixedHeader) error {

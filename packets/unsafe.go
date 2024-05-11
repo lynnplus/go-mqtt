@@ -161,6 +161,14 @@ func unsafeWriteUint32(w io.Writer, v *uint32) error {
 }
 
 func unsafeWriteBytes(w io.Writer, v *[]byte) error {
+	size := len(*v)
+	if size > math.MaxUint16 {
+		return ErrWriteStringLimit
+	}
+	n := uint16(size)
+	if err := unsafeWriteUint16(w, &n); err != nil {
+		return err
+	}
 	_, err := w.Write(*v)
 	return err
 }

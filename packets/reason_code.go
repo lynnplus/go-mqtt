@@ -181,22 +181,22 @@ const (
 )
 
 type ReasonCodeError struct {
-	code    ReasonCode
+	Code    ReasonCode
 	message string
 }
 
 func (r *ReasonCodeError) Error() string {
 	if r.message != "" {
-		return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.code), r.message)
+		return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.Code), r.message)
 	}
 	//TODO a more readable message should be used
-	return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.code), r.code)
+	return fmt.Sprintf("mqtt 0x%x err,%s", byte(r.Code), r.Code)
 }
 
 func (r *ReasonCodeError) Is(target error) bool {
 	var x *ReasonCodeError
 	if errors.As(target, &x) {
-		return x.code == r.code
+		return x.Code == r.Code
 	}
 	return false
 }

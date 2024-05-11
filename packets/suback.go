@@ -51,7 +51,8 @@ func (u *CommonSuback) Pack(w io.Writer, header *FixedHeader) error {
 		}
 	}
 	rc := unsafe.Slice((*byte)(unsafe.SliceData(u.ReasonCodes)), uint32(len(u.ReasonCodes)))
-	return unsafeWriteBytes(w, &rc)
+	_, err = w.Write(rc)
+	return err
 }
 
 func (u *CommonSuback) Unpack(r io.Reader, header *FixedHeader) error {

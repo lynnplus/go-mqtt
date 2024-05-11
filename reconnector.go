@@ -24,14 +24,15 @@ import (
 
 type ReConnector interface {
 	ConnectionLost(pkt *packets.Disconnect, err error) *time.Timer
-	ConnectionFailure(dialer Dialer, err error) *time.Timer
+	ConnectionFailure(dialer Dialer, err error) (Dialer, *time.Timer)
 	// Reset is called when the connection is successful or initialization is required.
 	Reset()
 }
 
 type AutoReConnector struct {
-	AutoReconnect bool //Whether to retry after connection loss
-	ConnectRetry  bool //Whether to retry after connection failure
+	AutoReconnect bool //Whether to automatically reconnect after the connection is lost
+	ConnectRetry  bool //Whether to retry after the first connection failure
+	MaxRetryDelay time.Duration
 	count         atomic.Uint32
 }
 
@@ -39,6 +40,7 @@ func NewAutoReConnector() *AutoReConnector {
 	return &AutoReConnector{
 		AutoReconnect: true,
 		ConnectRetry:  true,
+		MaxRetryDelay: time.Minute,
 	}
 }
 
@@ -53,9 +55,19 @@ func (a *AutoReConnector) ConnectionLost(pkt *packets.Disconnect, err error) *ti
 	return nil
 }
 
-func (a *AutoReConnector) ConnectionFailure(dialer Dialer, err error) *time.Timer {
+func (a *AutoReConnector) ConnectionFailure(dialer Dialer, err error) (Dialer, *time.Timer) {
 	if !a.ConnectRetry {
-		return nil
+		return dialer, nil
 	}
-	return nil
+	d := a.count.Load() * 2
+	if d < 5 {
+		d = 5
+	}
+	delay := time.Duration(d) * time.Second
+	if delay > a.MaxRetryDelay {
+		delay = a.MaxRetryDelay
+	}
+	timer := time.NewTimer(delay)
+	a.count.Add(1)
+	return dialer, timer
 }

@@ -26,13 +26,11 @@ import (
 )
 
 type Dialer interface {
-	Dial(ctx context.Context) (net.Conn, error)
+	Dial(ctx context.Context, timeout time.Duration) (net.Conn, error)
 }
 
 type ConnDialer struct {
-	Address string
-	// Timeout is the maximum amount of time a dial will wait for connect to complete.
-	Timeout   time.Duration
+	Address   string
 	TLSConfig *tls.Config
 }
 
@@ -46,7 +44,7 @@ func (c *ConnDialer) schemeToNetwork(scheme string) string {
 	return scheme
 }
 
-func (c *ConnDialer) Dial(ctx context.Context) (net.Conn, error) {
+func (c *ConnDialer) Dial(ctx context.Context, timeout time.Duration) (net.Conn, error) {
 	u, err := url.Parse(c.Address)
 	if err != nil {
 		return nil, err
@@ -54,7 +52,7 @@ func (c *ConnDialer) Dial(ctx context.Context) (net.Conn, error) {
 	scheme := strings.ToLower(u.Scheme)
 	scheme = c.schemeToNetwork(scheme)
 
-	d := net.Dialer{Timeout: c.Timeout}
+	d := net.Dialer{Timeout: timeout}
 	switch scheme {
 	case "tls":
 		td := tls.Dialer{NetDialer: &d, Config: c.TLSConfig}

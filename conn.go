@@ -19,7 +19,6 @@ package mqtt
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"github.com/lynnplus/go-mqtt/packets"
 	"net"
 	"sync"
@@ -42,30 +41,30 @@ type Conn struct {
 	closed  atomic.Bool
 }
 
-func connect(conn *Conn, pkt *packets.Connect) (*packets.Connack, error) {
-	var err error
-	_ = conn.conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if err = conn.writePacket(pkt); err != nil {
-		return nil, err
-	}
-	if err = conn.flushWrite(); err != nil {
-		return nil, err
-	}
-
-	var packet packets.Packet
-	packet, err = conn.readPacket()
-	if err != nil {
-		return nil, err
-	}
-	ack, ok := packet.(*packets.Connack)
-	if !ok {
-		return nil, fmt.Errorf("packet is not Connack")
-	}
-	return ack, nil
-}
+//func connect(conn *Conn, pkt *packets.Connect) (*packets.Connack, error) {
+//	var err error
+//	_ = conn.conn.SetDeadline(time.Now().Add(5 * time.Second))
+//	if err = conn.writePacket(pkt); err != nil {
+//		return nil, err
+//	}
+//	if err = conn.flushWrite(); err != nil {
+//		return nil, err
+//	}
+//
+//	var packet packets.Packet
+//	packet, err = conn.readPacket()
+//	if err != nil {
+//		return nil, err
+//	}
+//	ack, ok := packet.(*packets.Connack)
+//	if !ok {
+//		return nil, fmt.Errorf("packet is not Connack")
+//	}
+//	return ack, nil
+//}
 
 func attemptConnection(ctx context.Context, dialer Dialer, size int, client *Client) (*Conn, error) {
-	conn, err := dialer.Dial(ctx)
+	conn, err := dialer.Dial(ctx, client.config.ConnectTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -86,12 +85,17 @@ func (conn *Conn) writePacket(packet packets.Packet) error {
 	return packets.WriteTo(conn.writer, packet, conn.version)
 }
 
-func (conn *Conn) flushWrite() error {
+func (conn *Conn) flushWrite(packet packets.Packet) error {
+	if err := conn.writePacket(packet); err != nil {
+		return err
+	}
 	return conn.writer.Flush()
 }
 
 func (conn *Conn) run(ctx context.Context, output <-chan *packetInfo) {
 	conn.wg.Add(2)
+	//set io timeout to 0
+	_ = conn.conn.SetDeadline(time.Time{})
 	go conn.loopRead(ctx)
 	go conn.loopWrite(ctx, output)
 }
@@ -101,13 +105,12 @@ func (conn *Conn) loopRead(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			conn.loopEnd(nil)
 			return
 		default:
 		}
 		pkt, err := conn.readPacket()
 		if err != nil {
-			conn.loopEnd(err)
+			conn.loopIOError(err)
 			return
 		}
 		conn.client.incoming(ctx, pkt)
@@ -120,23 +123,21 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 	for {
 		select {
 		case <-ctx.Done():
-			conn.loopEnd(nil)
 			return
 		case info, ok := <-output:
 			if !ok {
-				conn.loopEnd(nil)
 				return
 			}
 			err = conn.writePacket(info.packet)
 			if err != nil {
 				info.err <- err
-				conn.loopEnd(err)
+				conn.loopIOError(err)
 				return
 			}
 			if len(output) == 0 {
 				if err = conn.writer.Flush(); err != nil {
 					info.err <- err
-					conn.loopEnd(err)
+					conn.loopIOError(err)
 					return
 				}
 			}
@@ -145,19 +146,16 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 	}
 }
 
-func (conn *Conn) loopEnd(err error) {
-	fmt.Println("loop end", err)
+func (conn *Conn) loopIOError(err error) {
 	if conn.closed.Load() {
 		return
 	}
 	if conn.client != nil {
-		fmt.Println("---")
 		go conn.client.occurredError(err)
 	}
 }
 
 func (conn *Conn) close() error {
-	fmt.Println("start close connection")
 	if !conn.closed.CompareAndSwap(false, true) {
 		return nil
 	}

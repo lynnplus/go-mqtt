@@ -35,7 +35,7 @@ const (
 	StatusNone ConnStatus = iota
 	StatusConnecting
 	StatusConnected
-	StatusDisconnected
+	StatusDisconnecting
 )
 
 func (c ConnStatus) String() string {
@@ -46,8 +46,8 @@ func (c ConnStatus) String() string {
 		return "StatusConnecting"
 	case StatusConnected:
 		return "StatusConnected"
-	case StatusDisconnected:
-		return "StatusDisconnected"
+	case StatusDisconnecting:
+		return "StatusDisconnecting"
 	}
 	return "Unknown"
 }
@@ -58,6 +58,10 @@ func (x *ConnState) Store(val ConnStatus) { atomic.StoreInt32((*int32)(&x.v), in
 
 func (x *ConnState) CompareAndSwap(old, new ConnStatus) (swapped bool) {
 	return atomic.CompareAndSwapInt32((*int32)(&x.v), int32(old), int32(new))
+}
+
+func (x *ConnState) Swap(new ConnStatus) (old ConnStatus) {
+	return ConnStatus(atomic.SwapInt32((*int32)(&x.v), int32(new)))
 }
 
 func (x *ConnState) IsConnected() bool {

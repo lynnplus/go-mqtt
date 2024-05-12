@@ -16,8 +16,6 @@
 
 package mqtt
 
-import "fmt"
-
 type MessageHandler func(ctx Context)
 
 type Router interface {
@@ -28,11 +26,5 @@ type DefaultRouter struct{}
 
 func (d *DefaultRouter) Route(ctx Context) {
 
-	fmt.Println("DefaultRouter Route:", ctx.Topic())
+	//fmt.Println("DefaultRouter Route:", ctx.Topic())
 }
-
-//
-//type SubscriberGroup interface {
-//
-//	Subscribe(topic string, handler MessageHandler)
-//}

@@ -29,34 +29,64 @@ import (
 	"time"
 )
 
-type logger struct{}
+type fmtLogger struct{}
 
-func (l *logger) Debug(format string, args ...any) {
+func (l *fmtLogger) Debug(format string, args ...any) {
 	fmt.Println(time.Now().Format("2006-01-02 15:04:05") + ":[D] " + fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Error(format string, args ...any) {
+func (l *fmtLogger) Error(format string, args ...any) {
 	fmt.Println(time.Now().Format("2006-01-02 15:04:05") + ":[E] " + fmt.Sprintf(format, args...))
+}
+
+var logger = &fmtLogger{}
+
+func onConnected(cl *mqtt.Client, ack *packets.Connack) {
+	logger.Debug("callback onConnected")
+}
+
+func onConnectionLost(client *mqtt.Client, err error) {
+	logger.Debug("callback onConnectionLost")
+}
+
+func onConnectFailed(client *mqtt.Client, err error) {
+	logger.Debug("callback onConnectFailed")
+}
+
+func onServerDisconnect(client *mqtt.Client, pkt *packets.Disconnect) {
+	logger.Debug("callback onServerDisconnect")
+}
+func onClientError(client *mqtt.Client, err error) {
+	logger.Debug("callback onClientError")
 }
 
 func main() {
 
-	logger := &logger{}
+	config := &mqtt.ClientConfig{
+		Logger: logger,
+		ClientListener: mqtt.ClientListener{
+			OnConnected:        onConnected,
+			OnClientError:      onClientError,
+			OnServerDisconnect: onServerDisconnect,
+			OnConnectFailed:    onConnectFailed,
+			OnConnectionLost:   onConnectionLost,
+		},
+		ReConnector: mqtt.NewAutoReConnector(),
+	}
 
 	client := mqtt.NewClient(&mqtt.ConnDialer{
 		Address: "tcp://127.0.0.1:1883",
-		Timeout: 10 * time.Second,
-	}, mqtt.ClientConfig{
-		Logger: logger,
-	})
+	}, *config)
 
-	pkt := packets.NewConnect("test_client", "lynn", nil)
+	pkt := packets.NewConnect("client_id", "", nil)
 
 	ack, err := client.Connect(context.Background(), pkt)
 	if err != nil {
 		panic(err)
 	}
-	logger.Debug("chat-client connack: %v", ack)
+	if ack.ReasonCode != 0 {
+		panic(packets.NewReasonCodeError(ack.ReasonCode, ""))
+	}
 
 	stdin := bufio.NewReader(os.Stdin)
 	sig := make(chan os.Signal, 1)
@@ -69,9 +99,9 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(suback, *suback.Properties)
-
+	logger.Debug("chat-client suback: %v", suback)
 	go func() {
+		time.Sleep(2 * time.Second)
 		unsub := packets.NewUnsubscribe("test/empty")
 		unsuback, err := client.Unsubscribe(context.Background(), unsub)
 		if err != nil {
@@ -83,7 +113,7 @@ func main() {
 	for {
 		select {
 		case <-sig:
-			return
+			goto loopEnd
 		default:
 		}
 
@@ -102,5 +132,7 @@ func main() {
 			logger.Error("chat-client publish err: %v", err)
 		}
 	}
+loopEnd:
 
+	_ = client.Disconnect()
 }

@@ -465,14 +465,19 @@ func (c *Client) Unsubscribe(ctx context.Context, pkt *packets.Unsubscribe) (*pa
 	if err != nil {
 		return nil, err
 	}
-	if err = c.awaitSendComplete(ctx, pkt); err != nil {
+	subCtx, cancel := context.WithTimeout(ctx, c.config.PacketTimeout)
+	defer cancel()
+	if err = c.awaitSendComplete(subCtx, pkt); err != nil {
+		if e := c.config.Session.RevokePacket(pkt); e != nil {
+			c.config.Logger.Error("session revoke packet(Subscribe) error:%v", e)
+		}
 		return nil, err
 	}
 	c.config.Pinger.Ping()
 	var respPkt packets.Packet
 	select {
-	//TODO timeout ctx
 	case <-ctx.Done():
+		return nil, subCtx.Err()
 	case respPkt = <-resp:
 		if respPkt.Type() != packets.UNSUBACK {
 			return nil, errors.New("invalid packet type received, expected UNSUBACK")

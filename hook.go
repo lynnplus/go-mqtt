@@ -16,6 +16,8 @@
 
 package mqtt
 
+import "github.com/lynnplus/go-mqtt/packets"
+
 type HookName string
 
 const (
@@ -25,3 +27,35 @@ const (
 	HookUnsubscribe HookName = "unsubscribe"
 	HookDisconnect  HookName = "disconnect"
 )
+
+type Trigger struct{}
+
+func (g *Trigger) onConnectionCompleted(client *Client, ack *packets.Connack) {
+	if client.config.OnConnected != nil {
+		go client.config.OnConnected(client, ack)
+	}
+}
+
+func (g *Trigger) onConnectionLost(client *Client, err error) {
+	if client.config.OnConnectionLost != nil {
+		go client.config.OnConnectionLost(client, err)
+	}
+}
+
+func (g *Trigger) onConnectFailed(client *Client, err error) {
+	if client.config.OnConnectFailed != nil {
+		go client.config.OnConnectFailed(client, err)
+	}
+}
+
+func (g *Trigger) onServerDisconnect(client *Client, pkt *packets.Disconnect) {
+	if client.config.OnServerDisconnect != nil {
+		go client.config.OnServerDisconnect(client, pkt)
+	}
+}
+
+func (g *Trigger) onClientError(client *Client, err error) {
+	if client.config.OnClientError != nil {
+		go client.config.OnClientError(client, err)
+	}
+}

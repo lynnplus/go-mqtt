@@ -41,28 +41,6 @@ type Conn struct {
 	closed  atomic.Bool
 }
 
-//func connect(conn *Conn, pkt *packets.Connect) (*packets.Connack, error) {
-//	var err error
-//	_ = conn.conn.SetDeadline(time.Now().Add(5 * time.Second))
-//	if err = conn.writePacket(pkt); err != nil {
-//		return nil, err
-//	}
-//	if err = conn.flushWrite(); err != nil {
-//		return nil, err
-//	}
-//
-//	var packet packets.Packet
-//	packet, err = conn.readPacket()
-//	if err != nil {
-//		return nil, err
-//	}
-//	ack, ok := packet.(*packets.Connack)
-//	if !ok {
-//		return nil, fmt.Errorf("packet is not Connack")
-//	}
-//	return ack, nil
-//}
-
 func attemptConnection(ctx context.Context, dialer Dialer, size int, client *Client) (*Conn, error) {
 	conn, err := dialer.Dial(ctx, client.config.ConnectTimeout)
 	if err != nil {
@@ -110,7 +88,7 @@ func (conn *Conn) loopRead(ctx context.Context) {
 		}
 		pkt, err := conn.readPacket()
 		if err != nil {
-			conn.loopIOError(err)
+			conn.loopIOError(false, err)
 			return
 		}
 		conn.client.incoming(ctx, pkt)
@@ -131,13 +109,13 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 			err = conn.writePacket(info.packet)
 			if err != nil {
 				info.err <- err
-				conn.loopIOError(err)
+				conn.loopIOError(true, err)
 				return
 			}
 			if len(output) == 0 {
 				if err = conn.writer.Flush(); err != nil {
 					info.err <- err
-					conn.loopIOError(err)
+					conn.loopIOError(true, err)
 					return
 				}
 			}
@@ -146,12 +124,12 @@ func (conn *Conn) loopWrite(ctx context.Context, output <-chan *packetInfo) {
 	}
 }
 
-func (conn *Conn) loopIOError(err error) {
+func (conn *Conn) loopIOError(isWriter bool, err error) {
 	if conn.closed.Load() {
 		return
 	}
 	if conn.client != nil {
-		go conn.client.occurredError(err)
+		go conn.client.occurredError(!isWriter, err)
 	}
 }
 

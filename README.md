@@ -82,7 +82,7 @@ func main() {
 }
 ```
 
-一个基本的聊天示例请查看 https://github.com/lynnplus/go-mqtt/blob/master/examples/chat/main.go
+For a basic chat example please see: https://github.com/lynnplus/go-mqtt/blob/master/examples/chat/main.go
 
 ## Features
 

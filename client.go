@@ -23,6 +23,7 @@ import (
 	"github.com/lynnplus/go-mqtt/packets"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -41,33 +42,42 @@ type ClientConfig struct {
 	Logger    Logger
 	Pinger    Pinger
 	Router    Router
+	Auther    Auther
 	ClientListener
-	Session       SessionState
-	PacketTimeout time.Duration
+	Session SessionState
+	//packet send timeout
+	PacketTimeout  time.Duration
+	ReConnector    ReConnector
+	ConnectTimeout time.Duration
 }
 
 type Client struct {
-	dialer      Dialer
-	conn        *Conn
-	bufferSize  int
-	version     packets.ProtocolVersion
-	config      ClientConfig
-	properties  *ServerProperties
-	connState   ConnState
-	autoConnect bool
+	dialer     Dialer
+	conn       *Conn
+	bufferSize int
+	version    packets.ProtocolVersion
+	config     ClientConfig
+	properties *ServerProperties
+	connState  ConnState
 
 	clientId          string
 	sendQueue         chan *packetInfo
 	ctxCancelFunc     context.CancelFunc
 	workers           sync.WaitGroup
 	publishHandleChan chan *packets.Publish
+	closeSign         chan int
+	closing           atomic.Bool
 }
 
 var (
 	ErrInvalidArguments = errors.New("invalid argument")
+	ErrNotConnected     = errors.New("client not connected")
 )
 
 func NewClient(dialer Dialer, config ClientConfig) *Client {
+	if config.ConnectTimeout == 0 {
+		config.ConnectTimeout = 5 * time.Second
+	}
 	if config.Pinger == nil {
 		config.Pinger = NewDefaultPinger()
 	}
@@ -80,28 +90,53 @@ func NewClient(dialer Dialer, config ClientConfig) *Client {
 	if config.Router == nil {
 		config.Router = &DefaultRouter{}
 	}
+	if config.PacketTimeout == 0 {
+		config.PacketTimeout = time.Second * 5
+	}
+	//if config.ReConnector == nil {
+	//	config.ReConnector = NewAutoReConnector()
+	//}
 	return &Client{dialer: dialer, version: packets.ProtocolVersion5,
 		bufferSize: 4096,
 		config:     config,
+		closeSign:  make(chan int, 1),
 		properties: NewServerProperties(),
 		sendQueue:  make(chan *packetInfo, 30)}
 }
 
-// StartConnect connects to the MQTT server and sends packets.Connect packets.
-// If the connection fails, it will automatically retry until the connection is successful.
-// If Disconnect is called, retries will stop
-func (c *Client) StartConnect(pkt *packets.Connect) error {
+type connectionInfo struct {
+	ctx    context.Context //conn context
+	dialer Dialer
+	pkt    *packets.Connect
+	err    chan error
+	resp   chan *packets.Connack
+}
+
+// IsConnected returns whether the client is connected
+func (c *Client) IsConnected() bool {
+	return c.connState.IsConnected()
+}
+
+// StartConnect
+func (c *Client) StartConnect(ctx context.Context, pkt *packets.Connect) error {
 	if !pkt.ProtocolVersion.IsValid() {
 		return fmt.Errorf("protocol version is invalid")
 	}
 	if !c.connState.CompareAndSwap(StatusNone, StatusConnecting) {
 		return fmt.Errorf("connection already in %s", c.connState)
 	}
-	c.autoConnect = true
-	//TODO copy pkt
-
+	c.closeSign = make(chan int, 1)
+	cp := pkt.Clone()
+	info := &connectionInfo{
+		ctx:    ctx,
+		dialer: c.dialer,
+		pkt:    cp,
+	}
+	if c.config.ReConnector != nil {
+		c.config.ReConnector.Reset()
+	}
+	go c.internalConnect(info)
 	return nil
-
 }
 
 func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Connack, error) {
@@ -111,38 +146,189 @@ func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Co
 	if !c.connState.CompareAndSwap(StatusNone, StatusConnecting) {
 		return nil, fmt.Errorf("connection already in %s", c.connState)
 	}
-	conn, err := attemptConnection(ctx, c.dialer, c.bufferSize, c)
-	if err != nil {
-		callConnectFailed(c, err)
-		return nil, err
+	c.closeSign = make(chan int, 1)
+	cp := pkt.Clone()
+	info := &connectionInfo{
+		ctx:    ctx,
+		dialer: c.dialer,
+		pkt:    cp,
+		err:    make(chan error, 1),
+		resp:   make(chan *packets.Connack, 1),
 	}
-	c.clientId = pkt.ClientID
+	if c.config.ReConnector != nil {
+		c.config.ReConnector.Reset()
+	}
+	go c.internalConnect(info)
+
+	select {
+	case <-c.closeSign:
+		return nil, errors.New("client disconnected")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case err := <-info.err:
+		return nil, err
+	case ack := <-info.resp:
+		return ack, nil
+	}
+}
+
+func (c *Client) internalConnect(info *connectionInfo) {
+	var err error
+	defer func() {
+		if err != nil {
+			go c.connectFailed(info, err)
+		}
+	}()
+	if c.connState.Load() != StatusConnecting {
+		err = errors.New("client disconnecting")
+		return
+	}
+
+	var conn *Conn
+	//StatusConnecting
+	conn, err = attemptConnection(info.ctx, info.dialer, c.bufferSize, c)
+	if err != nil {
+		return
+	}
+	_ = conn.conn.SetDeadline(time.Now().Add(c.config.ConnectTimeout))
+	if err = conn.flushWrite(info.pkt); err != nil {
+		_ = conn.conn.Close()
+		return
+	}
+	var packet packets.Packet
+	for {
+		if c.connState.Load() != StatusConnecting {
+			_ = conn.conn.Close()
+			err = errors.New("client disconnecting")
+			return
+		}
+		packet, err = conn.readPacket()
+		if err != nil {
+			_ = conn.conn.Close()
+			return
+		}
+		switch temp := packet.(type) {
+		case *packets.Connack:
+			if temp.ReasonCode != packets.Success {
+				msg := ""
+				if temp.Properties != nil {
+					msg = temp.Properties.ReasonString
+				}
+				err = packets.NewReasonCodeError(temp.ReasonCode, msg)
+				_ = conn.conn.Close()
+				return
+			}
+			if temp.Properties != nil && temp.Properties.AuthMethod != "" {
+				if c.config.Auther != nil {
+					err = c.config.Auther.Authenticated(info.pkt.ClientID, temp)
+				}
+			}
+			if err != nil {
+				_ = conn.conn.Close()
+				return
+			}
+
+			if !c.connState.CompareAndSwap(StatusConnecting, StatusConnected) {
+				_ = conn.conn.Close()
+				err = fmt.Errorf("connection already in %s", c.connState)
+				return
+			}
+			c.connectComplete(conn, info.pkt, temp)
+			if info.resp != nil {
+				info.resp <- temp
+			}
+			return
+		case *packets.Auth:
+			if c.config.Auther == nil {
+				err = errors.New("auther not found when receiving server authentication request")
+				_ = conn.conn.Close()
+				return
+			}
+			packet, err = c.config.Auther.Authenticate(info.pkt.ClientID, temp)
+			if err != nil {
+				err = fmt.Errorf("authenticate handle err: %w", err)
+				_ = conn.conn.Close()
+				return
+			}
+			if err = conn.flushWrite(packet); err != nil {
+				err = fmt.Errorf("authenticate write err: %w", err)
+				_ = conn.conn.Close()
+				return
+			}
+		default:
+			err = fmt.Errorf("unknown packet type(%v) on connecting", packet.Type())
+			_ = conn.conn.Close()
+			return
+		}
+	}
+}
+
+func (c *Client) connectFailed(info *connectionInfo, err error) {
+	c.config.Logger.Debug("connect failed: %v", err)
+	if c.config.ReConnector == nil || c.connState.Load() != StatusConnecting {
+		if info.err != nil {
+			info.err <- err
+			close(info.err)
+		}
+		return
+	}
+	d, t := c.config.ReConnector.ConnectionFailure(info.dialer, err)
+	if t == nil {
+		if info.err != nil {
+			info.err <- err
+			close(info.err)
+		}
+		if !c.connState.CompareAndSwap(StatusConnecting, StatusNone) {
+			c.config.Logger.Error("Connection status switching failed, currently: %s", c.connState)
+		}
+		return
+	}
+	defer t.Stop()
+	info.dialer = d
+	select {
+	case <-c.closeSign:
+		if info.err != nil {
+			info.err <- errors.New("client disconnected")
+			close(info.err)
+		}
+	case <-info.ctx.Done():
+		if info.err != nil {
+			info.err <- info.ctx.Err()
+			close(info.err)
+		}
+		if !c.connState.CompareAndSwap(StatusConnecting, StatusNone) {
+			c.config.Logger.Error("Connection status switching failed, currently: %s", c.connState)
+		}
+	case <-t.C:
+		c.config.Logger.Debug("start re-connect")
+		go c.internalConnect(info)
+	}
+}
+
+func (c *Client) connectComplete(conn *Conn, pkt *packets.Connect, ack *packets.Connack) {
+	if c.config.ReConnector != nil {
+		c.config.ReConnector.Reset()
+	}
+
+	clientId := pkt.ClientID
 	keepAlive := time.Duration(pkt.KeepAlive) * time.Second
-	connack, err := connect(conn, pkt)
-	if err != nil {
-		_ = conn.close()
-		callConnectFailed(c, err)
-		return nil, err
-	}
-	if connack.Properties != nil {
-		if connack.Properties.ServerKeepAlive != nil {
-			keepAlive = time.Duration(*connack.Properties.ServerKeepAlive) * time.Second
+	if ack.Properties != nil {
+		if ack.Properties.ServerKeepAlive != nil {
+			keepAlive = time.Duration(*ack.Properties.ServerKeepAlive) * time.Second
 		}
-		if connack.Properties.AssignedClientID != "" {
-			c.clientId = connack.Properties.AssignedClientID
+		if ack.Properties.AssignedClientID != "" {
+			clientId = ack.Properties.AssignedClientID
 		}
 	}
-	c.properties.ReconfigureFromResponse(connack)
-	callConnectComplete(c, connack)
+	c.properties.ReconfigureFromResponse(ack)
+	//callConnectComplete(c, connack)
 
 	c.publishHandleChan = make(chan *packets.Publish, c.properties.ReceiveMaximum)
-
-	//set io timeout to 0
-	_ = conn.conn.SetDeadline(time.Time{})
 
 	clientCtx, cancelFunc := context.WithCancel(context.Background())
 	c.ctxCancelFunc = cancelFunc
 	c.conn = conn
+	c.clientId = clientId
 	c.conn.run(clientCtx, c.sendQueue)
 
 	c.workers.Add(1)
@@ -158,20 +344,8 @@ func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Co
 	go func() {
 		defer c.workers.Done()
 		c.handleReceivedPublish(clientCtx)
+		c.config.Logger.Debug("client publish handler exit")
 	}()
-	return connack, nil
-}
-
-func callConnectFailed(c *Client, err error) {
-	if c.config.OnConnectFailed != nil {
-		go c.config.OnConnectFailed(c, err)
-	}
-}
-
-func callConnectComplete(c *Client, pkt *packets.Connack) {
-	if c.config.OnConnected != nil {
-		go c.config.OnConnected(c, false, pkt)
-	}
 }
 
 func (c *Client) SendPing(ctx context.Context) error {
@@ -212,7 +386,16 @@ func (c *Client) PublishNR(ctx context.Context, pkt *packets.Publish) error {
 	return err
 }
 
+// Subscribe sends a subscription message to the server,
+// blocking and waiting for the server to respond to Suback or a timeout occurs.
+// The function will return the server's response(packets.Suback) and any errors.
+//
+// Note: that the function does not check the error code inside the Suback.
 func (c *Client) Subscribe(ctx context.Context, pkt *packets.Subscribe) (*packets.Suback, error) {
+	if !c.connState.IsConnected() {
+		return nil, ErrNotConnected
+	}
+
 	if !c.properties.SubIDAvailable && pkt.Properties != nil && pkt.Properties.SubscriptionID != nil {
 		return nil, fmt.Errorf("%w: cannot send subscribe with SubscriptionID set, server does not support SubscriptionID", ErrInvalidArguments)
 	}
@@ -232,15 +415,22 @@ func (c *Client) Subscribe(ctx context.Context, pkt *packets.Subscribe) (*packet
 	if err != nil {
 		return nil, err
 	}
-	if err = c.awaitSendComplete(ctx, pkt); err != nil {
+
+	subCtx, cancel := context.WithTimeout(ctx, c.config.PacketTimeout)
+	defer cancel()
+
+	if err = c.awaitSendComplete(subCtx, pkt); err != nil {
+		if e := c.config.Session.RevokePacket(pkt); e != nil {
+			c.config.Logger.Error("session revoke packet(Subscribe) error:%v", e)
+		}
 		return nil, err
 	}
 	c.config.Pinger.Ping()
 
 	var respPkt packets.Packet
 	select {
-	//TODO timeout ctx
-	case <-ctx.Done():
+	case <-subCtx.Done():
+		return nil, subCtx.Err()
 	case respPkt = <-resp:
 		if respPkt.Type() != packets.SUBACK {
 			return nil, errors.New("invalid packet type received, expected SUBACK")
@@ -283,17 +473,50 @@ func (c *Client) Disconnect() error {
 // Regardless of whether it is sent successfully or not,
 // the connection will be disconnected and no reconnection attempt will be made.
 func (c *Client) DisconnectWith(pkt *packets.Disconnect) error {
-	err := c.awaitSendComplete(context.Background(), pkt)
-	//TODO close conn
-	return err
+	if c.connState.Load() == StatusNone {
+		return nil
+	}
+	if c.connState.CompareAndSwap(StatusConnecting, StatusDisconnecting) {
+		close(c.closeSign)
+		return nil
+	}
+
+	if !c.connState.CompareAndSwap(StatusConnected, StatusDisconnecting) {
+		old := c.connState.Swap(StatusDisconnecting)
+		if old == StatusConnecting {
+			close(c.closeSign)
+			c.connState.Store(StatusNone)
+			return nil
+		}
+	}
+
+	if len(c.sendQueue) < cap(c.sendQueue) {
+		ctx, cf := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cf()
+		info := &packetInfo{packet: pkt, err: make(chan error, 1)}
+		c.sendQueue <- info
+		select {
+		case <-ctx.Done():
+		case e := <-info.err:
+			c.config.Logger.Debug("write disconnect packet, err(%v)", e)
+		}
+	}
+	c.shutdown()
+	return nil
 }
 
+// awaitSendComplete sends the packet to the write queue and waits for the io write to complete.
 func (c *Client) awaitSendComplete(ctx context.Context, pkt packets.Packet) error {
 	info := &packetInfo{packet: pkt, err: make(chan error, 1)}
-	err := c.sendPacketToQueue(info)
-	if err != nil {
-		return err
+	if !c.connState.IsConnected() {
+		return ErrNotConnected
 	}
+	//TODO Whether the send Queue will be full under certain circumstances
+	if len(c.sendQueue) == cap(c.sendQueue) {
+		return errors.New("send queue is full")
+	}
+	c.sendQueue <- info
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -302,21 +525,12 @@ func (c *Client) awaitSendComplete(ctx context.Context, pkt packets.Packet) erro
 	}
 }
 
-func (c *Client) sendPacketToQueue(pkt *packetInfo) error {
-	//TODO check connected state
-	if len(c.sendQueue) == cap(c.sendQueue) {
-		return errors.New("send queue is full")
-	}
-	c.sendQueue <- pkt
-	return nil
-}
-
 func (c *Client) incoming(ctx context.Context, pkt packets.Packet) {
 	c.config.Logger.Debug("incoming packet %s %v", pkt.Type(), pkt.ID())
 	switch pkt.Type() {
 	case packets.PUBLISH:
 		pub := pkt.(*packets.Publish)
-		fmt.Printf("incoming packet %v %v %v \n", pkt.ID(), pub.QoS, pub.Topic)
+		c.config.Logger.Debug("incoming publish packet %v %v %v \n", pkt.ID(), pub.QoS, pub.Topic)
 		if pub.QoS == 0 {
 			select {
 			case <-ctx.Done():
@@ -370,20 +584,44 @@ func (c *Client) serverDisconnect(pkt *packets.Disconnect) {
 	if pkt.Properties != nil && pkt.Properties.ReasonString != "" {
 		c.config.Logger.Debug("disconnection reason: %s", pkt.Properties.ReasonString)
 	}
-
-	c.shutdown()
+	c.config.Logger.Debug("start shutdown,state:%v", c.connState)
+	if c.connState.CompareAndSwap(StatusConnected, StatusDisconnecting) {
+		c.shutdown()
+	}
 }
 
 func (c *Client) shutdown() {
-	c.ctxCancelFunc()
+	if !c.closing.CompareAndSwap(false, true) {
+		return
+	}
+	close(c.closeSign)
+	if c.ctxCancelFunc != nil {
+		c.ctxCancelFunc()
+	}
+	if c.conn != nil {
+		if err := c.conn.close(); err != nil {
+			c.config.Logger.Debug("close conn err:%v", err)
+		}
+	}
+	c.workers.Wait()
+	close(c.publishHandleChan)
+	c.closing.Store(false)
+	c.config.Logger.Debug("shutdown finished")
 }
 
+// An exception occurred on the client
 func (c *Client) occurredError(err error) {
-	c.config.Logger.Error("occurredError:%v", err)
-
-	c.ctxCancelFunc()
-
-	if closeErr := c.conn.close(); closeErr != nil {
-		c.config.Logger.Debug("close conn err:%v", closeErr)
+	if c.connState.Load() == StatusDisconnecting {
+		return
 	}
+	c.config.Logger.Error("an unexpected error occurred: %v", err)
+	var dis *packets.Disconnect
+	re := &packets.ReasonCodeError{}
+	if errors.As(err, &re) {
+		dis = packets.NewDisconnect(re.Code, "")
+	} else {
+		dis = packets.NewDisconnect(packets.UnspecifiedError, err.Error())
+	}
+	c.config.Logger.Debug("disconnect by err: %v", err)
+	_ = c.DisconnectWith(dis)
 }

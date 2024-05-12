@@ -26,6 +26,16 @@ type Auth struct {
 	Properties *AuthProperties
 }
 
+func NewAuthWith(code ReasonCode, method string, data []byte) *Auth {
+	return &Auth{
+		ReasonCode: code,
+		Properties: &AuthProperties{
+			AuthMethod: method,
+			AuthData:   data,
+		},
+	}
+}
+
 func (a *Auth) Pack(w io.Writer, header *FixedHeader) error {
 	if header.version < ProtocolVersion5 {
 		return ErrUnsupportedValueOnVersion

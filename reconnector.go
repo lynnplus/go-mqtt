@@ -17,13 +17,24 @@
 package mqtt
 
 import (
+	"errors"
 	"github.com/lynnplus/go-mqtt/packets"
 	"sync/atomic"
 	"time"
 )
 
+// ReConnector is an interface that implements the client disconnection and reconnection flow.
+//
+// After the client successfully establishes a connection,
+// if the connection is lost, Connection Lost will first be called to reconnect.
+// If the connection fails to be established during the reconstruction process,
+// Connection Failure will be called to retry the flow.
 type ReConnector interface {
+	// ConnectionLost is called when the connection is lost or the server sends a disconnection packet.
+	// It returns a timer to indicate when the client should reinitiate the connection.
+	// If the timer is empty, it means that no reconnection will be initiated.
 	ConnectionLost(pkt *packets.Disconnect, err error) *time.Timer
+	// ConnectionFailure is called when the connection fails to be established.
 	ConnectionFailure(dialer Dialer, err error) (Dialer, *time.Timer)
 	// Reset is called when the connection is successful or initialization is required.
 	Reset()
@@ -34,13 +45,14 @@ type AutoReConnector struct {
 	ConnectRetry  bool //Whether to retry after the first connection failure
 	MaxRetryDelay time.Duration
 	count         atomic.Uint32
+	lastLost      time.Time
 }
 
 func NewAutoReConnector() *AutoReConnector {
 	return &AutoReConnector{
 		AutoReconnect: true,
 		ConnectRetry:  true,
-		MaxRetryDelay: time.Minute,
+		MaxRetryDelay: 5 * time.Minute,
 	}
 }
 
@@ -52,13 +64,41 @@ func (a *AutoReConnector) ConnectionLost(pkt *packets.Disconnect, err error) *ti
 	if !a.AutoReconnect {
 		return nil
 	}
-	return nil
+	if pkt != nil {
+		if pkt.ReasonCode == packets.ServerBusy || pkt.ReasonCode == packets.ServerShuttingDown {
+			return time.NewTimer(15 * time.Second)
+		}
+	}
+
+	now := time.Now()
+	if now.Sub(a.lastLost) < (5 * time.Second) {
+		return time.NewTimer(10 * time.Second)
+	} else {
+		a.lastLost = now
+		return time.NewTimer(2 * time.Second)
+	}
+}
+
+func (a *AutoReConnector) allowRetry(code packets.ReasonCode) bool {
+	switch code {
+	case packets.ServerBusy,
+		packets.ServerUnavailable:
+		return true
+	}
+	return false
 }
 
 func (a *AutoReConnector) ConnectionFailure(dialer Dialer, err error) (Dialer, *time.Timer) {
 	if !a.ConnectRetry {
 		return dialer, nil
 	}
+	var reasonErr *packets.ReasonCodeError
+	if errors.As(err, &reasonErr) {
+		if !a.allowRetry(reasonErr.Code) {
+			return dialer, nil
+		}
+	}
+
 	d := a.count.Load() * 2
 	if d < 5 {
 		d = 5

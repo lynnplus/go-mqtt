@@ -60,8 +60,12 @@ func onClientError(client *mqtt.Client, err error) {
 	logger.Debug("callback onClientError")
 }
 
-func main() {
+func onReceivedChatMsg(ctx mqtt.Context) {
+	logger.Debug("callback onReceivedChatMsg: %v", ctx.Topic())
+}
 
+func main() {
+	router := mqtt.NewDefaultRouter()
 	config := &mqtt.ClientConfig{
 		Logger: logger,
 		ClientListener: mqtt.ClientListener{
@@ -72,6 +76,7 @@ func main() {
 			OnConnectionLost:   onConnectionLost,
 		},
 		ReConnector: mqtt.NewAutoReConnector(),
+		Router:      router,
 	}
 
 	client := mqtt.NewClient(&mqtt.ConnDialer{
@@ -93,6 +98,10 @@ func main() {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
 	topic := "test/chat"
+
+	regCancel := router.RegisterCancelable(topic, onReceivedChatMsg)
+	defer regCancel()
+
 	sub := packets.NewSubscribe(topic, "test/empty")
 	suback, err := client.Subscribe(context.Background(), sub)
 	if err != nil {

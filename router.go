@@ -17,6 +17,7 @@
 package mqtt
 
 import (
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -25,10 +26,14 @@ import (
 
 type MessageHandler func(ctx Context)
 
+type HandlerCancelFunc func()
+
+// Router is an interface that routes Publish messages based on topic
 type Router interface {
 	Route(ctx Context)
 }
 
+// DefaultRouter is a structure that implements the Router interface
 type DefaultRouter struct {
 	trie      *RouteNode
 	idCounter atomic.Uint64
@@ -41,31 +46,85 @@ func NewDefaultRouter() *DefaultRouter {
 	}
 }
 
-// Register 向路由中添加一个对topicFilter的消息处理器，并返回一个处理器的注册id，
-func (d *DefaultRouter) Register(topicFilter string, handler MessageHandler) uint64 {
+// Register registers a MessageHandler associated with topicFilter in the router
+func (d *DefaultRouter) Register(topicFilter string, handler MessageHandler) {
+	d.RegisterCancelable(topicFilter, handler)
+}
+
+// RegisterCancelable registers a MessageHandler associated with topicFilter and returns a HandlerCancelFunc.
+// Calling HandlerCancelFunc can cancel the registration independently.
+//
+// Different from UnRegister, UnRegister will cancel all Message Handlers associated with topic Filter,
+// but Handler Cancel Func only deletes itself.
+func (d *DefaultRouter) RegisterCancelable(topicFilter string, handler MessageHandler) HandlerCancelFunc {
 	data := &RouteData{
 		handler: handler,
 		rid:     d.idCounter.Add(1),
 	}
 	d.mutex.Lock()
-	d.trie.Insert(topicFilter, data)
+	cancel := d.trie.Insert(topicFilter, data)
 	d.mutex.Unlock()
-	return data.rid
+	return func() {
+		d.mutex.Lock()
+		cancel()
+		d.mutex.Unlock()
+	}
 }
 
-// UnRegister
+// UnRegister receives a topicFilter and unregisters all MessageHandlers associated with the topicFilter in the router.
 func (d *DefaultRouter) UnRegister(topicFilter string) {
 	d.mutex.Lock()
 	d.trie.Remove(topicFilter)
 	d.mutex.Unlock()
 }
 
-func (d *DefaultRouter) UnRegisterHandler(rid uint64) {
-
+func (d *DefaultRouter) NewRouteGroup() *RouteGroup {
+	return &RouteGroup{DefaultRouter: d}
 }
 
-func (d *DefaultRouter) NewHandlerGroup(rid uint64) {
+// RouteGroup is a structure that extends DefaultRouter and integrates the function of batch unregister.
+// Created by NewRouteGroup of DefaultRouter
+type RouteGroup struct {
+	*DefaultRouter
+	cancels []HandlerCancelFunc
+	locked  atomic.Bool
+}
 
+// Register is a wrapper function for RegisterCancelable
+func (r *RouteGroup) Register(topicFilter string, handler MessageHandler) {
+	r.RegisterCancelable(topicFilter, handler)
+}
+
+// RegisterCancelable registers a MessageHandler associated with topicFilter with the router,
+// and internally records a HandlerCancelFunc that can be used in Cancel.
+func (r *RouteGroup) RegisterCancelable(topicFilter string, handler MessageHandler) HandlerCancelFunc {
+	f := r.DefaultRouter.RegisterCancelable(topicFilter, handler)
+
+	for !r.locked.CompareAndSwap(false, true) {
+		runtime.Gosched()
+	}
+	r.cancels = append(r.cancels, f)
+	r.locked.Store(false)
+	return f
+}
+
+// Cancel unregisters all MessageHandlers registered on this RouteGroup
+func (r *RouteGroup) Cancel() {
+	for !r.locked.CompareAndSwap(false, true) {
+		runtime.Gosched()
+	}
+	cache := make([]HandlerCancelFunc, len(r.cancels))
+	copy(cache, r.cancels)
+	r.cancels = r.cancels[:0]
+	r.locked.Store(false)
+
+	for _, cancelFunc := range cache {
+		cancelFunc()
+	}
+}
+
+func (r *RouteGroup) NewRouteGroup() *RouteGroup {
+	return &RouteGroup{DefaultRouter: r.DefaultRouter}
 }
 
 func (d *DefaultRouter) Route(ctx Context) {

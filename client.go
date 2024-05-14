@@ -122,7 +122,7 @@ func (c *Client) StartConnect(ctx context.Context, pkt *packets.Connect) error {
 		return fmt.Errorf("protocol version is invalid")
 	}
 	if !c.connState.CompareAndSwap(StatusNone, StatusConnecting) {
-		return fmt.Errorf("connection already in %s", c.connState)
+		return fmt.Errorf("connection already in %s", c.connState.String())
 	}
 	c.closeSign = make(chan int, 1)
 	cp := pkt.Clone()
@@ -143,7 +143,7 @@ func (c *Client) Connect(ctx context.Context, pkt *packets.Connect) (*packets.Co
 		return nil, fmt.Errorf("protocol version or name is invalid")
 	}
 	if !c.connState.CompareAndSwap(StatusNone, StatusConnecting) {
-		return nil, fmt.Errorf("connection already in %s", c.connState)
+		return nil, fmt.Errorf("connection already in %s", c.connState.String())
 	}
 	c.closeSign = make(chan int, 1)
 	cp := pkt.Clone()
@@ -229,7 +229,7 @@ func (c *Client) internalConnect(info *connectionInfo) {
 
 			if !c.connState.CompareAndSwap(StatusConnecting, StatusConnected) {
 				_ = conn.conn.Close()
-				err = fmt.Errorf("connection already in %s", c.connState)
+				err = fmt.Errorf("connection already in %s", c.connState.String())
 				return
 			}
 			c.connectComplete(conn, info.pkt, temp)
